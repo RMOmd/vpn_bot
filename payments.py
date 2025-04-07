@@ -4,7 +4,12 @@ from datetime import datetime, timedelta, UTC
 from aiogram import types, Bot
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database import Session, User, Subscription
-from config import PAYMENT_PROVIDER_TOKEN
+from config import PAYMENT_PROVIDER_TOKEN, ROBOKASSA_LOGIN, ROBOKASSA_PASS1, ROBOKASSA_PASS2
+import hashlib
+import aiohttp
+import logging
+
+logger = logging.getLogger(__name__)
 
 class PaymentManager:
     def __init__(self):
@@ -18,9 +23,21 @@ class PaymentManager:
             12: 480,  # 12 месяцев - 480 звезд
         }
 
+        # Стоимость в рублях для разных периодов
+        self.rub_prices = {
+            1: 149,    # 1 месяц - 149 рублей
+            3: 399,    # 3 месяца - 399 рублей
+            6: 699,    # 6 месяцев - 699 рублей
+            12: 1299,  # 12 месяцев - 1299 рублей
+        }
+
     def get_star_price(self, duration_months: int) -> int:
         """Получить стоимость подписки в звездах"""
         return self.star_prices.get(duration_months, 0)
+
+    def get_rub_price(self, duration_months: int) -> int:
+        """Получить стоимость подписки в рублях"""
+        return self.rub_prices.get(duration_months, 0)
 
     async def create_payment(self, user_id: int, amount: float, duration_months: int) -> dict:
         """Создает обычный платеж через Telegram Payments
@@ -60,12 +77,12 @@ class PaymentManager:
         }
 
     async def create_star_payment(self, user_id: int, duration_months: int) -> dict:
-        """Создает платеж звездами
-        
-        Returns:
-            dict: Информация о платеже
-        """
+        """Создает платеж звездами"""
         stars_amount = self.get_star_price(duration_months)
+        if not stars_amount:
+            logger.error(f"Не найдена цена для периода {duration_months} месяцев")
+            return None
+            
         payment_id = f"stars_{user_id}_{datetime.now(UTC).timestamp()}"
         
         # Сохраняем информацию о платеже
@@ -78,33 +95,87 @@ class PaymentManager:
             "type": "stars"
         }
         
+        logger.info(f"Создан платеж звездами: {payment_id} для пользователя {user_id}")
         return {
             "payment_id": payment_id,
             "stars": stars_amount,
             "duration": duration_months
         }
 
+    async def create_robokassa_payment(self, user_id: int, duration_months: int) -> str:
+        """Создает платеж через Robokassa"""
+        amount = self.get_rub_price(duration_months)
+        inv_id = str(uuid.uuid4())[:8]  # Уникальный идентификатор заказа
+        
+        # Формируем подпись для Robokassa
+        signature_values = [
+            ROBOKASSA_LOGIN,
+            str(amount),
+            inv_id,
+            ROBOKASSA_PASS1,
+            f"Shp_user_id={user_id}",
+            f"Shp_duration={duration_months}"
+        ]
+        signature = hashlib.md5(":".join(signature_values).encode()).hexdigest()
+        
+        # Формируем URL для оплаты
+        base_url = "https://auth.robokassa.ru/Merchant/Index.aspx"
+        params = {
+            "MerchantLogin": ROBOKASSA_LOGIN,
+            "OutSum": amount,
+            "InvId": inv_id,
+            "Description": f"Подписка VPN на {duration_months} мес.",
+            "SignatureValue": signature,
+            "Shp_user_id": user_id,
+            "Shp_duration": duration_months,
+            "Culture": "ru"
+        }
+        
+        # Сохраняем информацию о платеже
+        payment_id = f"robo_{user_id}_{inv_id}"
+        self.payments[payment_id] = {
+            "user_id": user_id,
+            "amount": amount,
+            "duration": duration_months,
+            "created_at": datetime.now(UTC),
+            "status": "pending",
+            "type": "robokassa",
+            "inv_id": inv_id
+        }
+        
+        # Формируем URL для оплаты
+        query_params = "&".join([f"{k}={v}" for k, v in params.items()])
+        return f"{base_url}?{query_params}"
+
     async def process_star_payment(self, payment_id: str, from_user: types.User, bot: Bot) -> bool:
         """Обработка оплаты звездами"""
         payment_info = self.payments.get(payment_id)
         if not payment_info or payment_info["status"] != "pending":
+            logger.error(f"Платеж {payment_id} не найден или не в статусе pending")
             return False
             
         # Проверяем, что платеж от того же пользователя
         if payment_info["user_id"] != from_user.id:
+            logger.error(f"Платеж {payment_id} принадлежит другому пользователю")
             return False
 
         try:
-            # Генерируем ссылку для оплаты звездами
+            # Проверяем наличие необходимых данных
+            if "stars" not in payment_info:
+                logger.error(f"Отсутствует количество звезд в платеже {payment_id}")
+                return False
+                
+            # Создаем ссылку для оплаты звездами
             payment_info["payment_link"] = f"tg://premium/gift?quantity={payment_info['stars']}"
+            logger.info(f"Создана ссылка для оплаты звездами: {payment_info['payment_link']}")
             return True
             
         except Exception as e:
-            print(f"Ошибка при создании ссылки на оплату звездами: {e}")
+            logger.error(f"Ошибка при создании ссылки на оплату звездами: {e}")
             return False
 
-    async def confirm_star_payment(self, payment_id: str, from_user: types.User) -> bool:
-        """Подтверждение оплаты звездами"""
+    async def confirm_payment(self, payment_id: str, from_user: types.User) -> bool:
+        """Подтверждение любого типа оплаты"""
         payment_info = self.payments.get(payment_id)
         if not payment_info or payment_info["status"] != "pending":
             return False
@@ -127,11 +198,11 @@ class PaymentManager:
                 user_id=user.telegram_id,
                 start_date=datetime.now(UTC),
                 end_date=datetime.now(UTC) + timedelta(days=30 * payment_info["duration"]),
-                price=0,  # Цена 0, так как оплата звездами
+                price=payment_info.get("amount", 0),
                 is_trial=False,
                 is_active=True,
-                payment_type="stars",
-                stars_paid=payment_info["stars"]
+                payment_type=payment_info["type"],
+                stars_paid=payment_info.get("stars", 0)
             )
             session.add(subscription)
             user.is_active = True

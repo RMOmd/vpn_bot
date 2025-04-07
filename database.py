@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey, Float
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey, Float, BigInteger
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime, timedelta, UTC
@@ -19,14 +19,14 @@ Session = sessionmaker(bind=engine)
 class User(Base):
     __tablename__ = 'users'
     
-    telegram_id = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True)
+    telegram_id = Column(BigInteger, unique=True)
     username = Column(String)
     first_name = Column(String)
     last_name = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
     is_active = Column(Boolean, default=False)
-    trial_used = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
-    subscriptions = relationship("Subscription", backref="user", lazy="dynamic")
+    subscriptions = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")
 
     def get_active_subscription(self):
         """Получить активную подписку пользователя"""
@@ -61,18 +61,32 @@ class User(Base):
         active_sub = self.get_active_subscription()
         return active_sub and not active_sub.is_trial
 
+    def has_used_trial(self) -> bool:
+        """Проверяет, использовал ли пользователь пробный период"""
+        session = Session()
+        try:
+            trial_sub = session.query(Subscription).filter(
+                Subscription.user_id == self.telegram_id,
+                Subscription.is_trial == True
+            ).first()
+            return trial_sub is not None
+        finally:
+            session.close()
+
 class Subscription(Base):
     __tablename__ = 'subscriptions'
     
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey('users.telegram_id'))
-    start_date = Column(DateTime, default=lambda: datetime.now(UTC))
+    user_id = Column(BigInteger, ForeignKey('users.telegram_id'))
+    start_date = Column(DateTime, default=datetime.utcnow)
     end_date = Column(DateTime)
-    price = Column(Float, default=0)
+    price = Column(Float)
     is_trial = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
-    payment_type = Column(String)  # trial, money, stars
-    stars_paid = Column(Integer, default=0)  # Количество потраченных звезд
+    payment_type = Column(String)
+    stars_paid = Column(Integer, default=0)
+    
+    user = relationship("User", back_populates="subscriptions")
 
     def is_expired(self):
         """Проверить, истекла ли подписка"""
@@ -102,60 +116,46 @@ def init_db():
     session.commit()
     session.close()
 
-def get_or_create_user(telegram_id, username, first_name, last_name, fingerprint):
+def get_or_create_user(telegram_user):
+    """Получить или создать пользователя"""
     session = Session()
-    user = session.query(User).filter_by(telegram_id=telegram_id).first()
-    
-    if not user:
-        user = User(
-            telegram_id=telegram_id,
-            username=username,
-            first_name=first_name,
-            last_name=last_name,
-            fingerprint=fingerprint
-        )
-        session.add(user)
-        session.commit()
-    
-    session.close()
-    return user
+    try:
+        user = session.query(User).filter_by(telegram_id=telegram_user.id).first()
+        if not user:
+            user = User(
+                telegram_id=telegram_user.id,
+                username=telegram_user.username,
+                first_name=telegram_user.first_name,
+                last_name=telegram_user.last_name,
+                created_at=datetime.now(UTC)
+            )
+            session.add(user)
+            session.commit()
+        else:
+            # Обновляем данные существующего пользователя
+            user.username = telegram_user.username
+            user.first_name = telegram_user.first_name
+            user.last_name = telegram_user.last_name
+            session.commit()
+        return user
+    finally:
+        session.close()
 
-def create_trial_subscription(user_id, telegram_id):
+def create_trial_subscription(user):
+    """Создать пробную подписку для пользователя"""
     session = Session()
-    user = session.query(User).filter_by(id=user_id).first()
-    
-    # Специальная проверка для разработчика
-    if telegram_id == DEVELOPER_ID:
-        end_date = datetime.now(UTC) + timedelta(days=7)
+    try:
         subscription = Subscription(
-            user_id=user.id,
-            end_date=end_date,
-            subscription_type='trial',
+            user_id=user.telegram_id,
+            start_date=datetime.now(UTC),
+            end_date=datetime.now(UTC) + timedelta(days=7),
             price=0,
-            payment_method='trial'
+            is_trial=True,
+            is_active=True,
+            payment_type="trial"
         )
         session.add(subscription)
         session.commit()
-        session.close()
-        return True
-    
-    if user and not user.trial_used:
-        end_date = datetime.now(UTC) + timedelta(days=7)
-        user.trial_used = True
-        user.trial_end_date = end_date
-        
-        subscription = Subscription(
-            user_id=user.id,
-            end_date=end_date,
-            subscription_type='trial',
-            price=0,
-            payment_method='trial'
-        )
-        
-        session.add(subscription)
-        session.commit()
-        session.close()
-        return True
-    
-    session.close()
-    return False 
+        return subscription
+    finally:
+        session.close() 
