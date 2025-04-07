@@ -1,0 +1,7 @@
+python-telegram-bot==20.7
+aiogram>=3.0.0
+SQLAlchemy
+python-dotenv
+cryptography==41.0.7
+aiosqlite
+pyqiwip2p>=2.0.0 
