@@ -11,7 +11,9 @@ from config import (
 from database import init_db, get_or_create_user, create_trial_subscription, Session, User, Subscription, Country, VPNServer
 from admin import register_admin_handlers
 from v2ray import V2RayManager
-from datetime import datetime, timedelta, UTC
+from datetime import datetime, timedelta
+from pytz import UTC
+from utils import is_admin
 import logging
 
 # Настройка логирования
@@ -297,15 +299,43 @@ def create_trial_subscription(user, session):
     session.commit()
     return subscription
 
+@dp.message(Command("admin"))
+async def cmd_admin(message: types.Message):
+    """Обработчик команды /admin"""
+    if not await is_admin(message.from_user.id):
+        await message.answer("⛔️ У вас нет доступа к админ-панели")
+        return
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users")],
+        [InlineKeyboardButton(text="💰 Финансы", callback_data="admin_finance")],
+        [InlineKeyboardButton(text="🔑 Управление VPN", callback_data="admin_vpn")],
+        [InlineKeyboardButton(text="◀️ В главное меню", callback_data="back_to_main")]
+    ])
+
+    await message.answer("🛠 Админ-панель", reply_markup=keyboard)
+
+async def show_subscription_info(message: types.Message, subscription: Subscription) -> None:
+    if subscription.end_date.tzinfo is None:
+        end_date = subscription.end_date.replace(tzinfo=UTC)
+    else:
+        end_date = subscription.end_date
+        
+    days_left = (end_date - datetime.now(UTC)).days
+    text = (
+        f"🔑 Ваша подписка:\n\n"
+        f"Статус: {'Активна ✅' if subscription.is_active else 'Неактивна ❌'}\n"
+        f"Срок действия: до {end_date.strftime('%d.%m.%Y')}\n\n"
+        f"Осталось дней: {days_left}\n"
+    )
+
 async def main():
     # Инициализация базы данных
     init_db()
     
-    try:
-        # Запуск бота в режиме long polling
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
-    finally:
-        await bot.session.close()
+    # Запуск бота
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     import asyncio

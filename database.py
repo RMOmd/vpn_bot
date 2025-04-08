@@ -1,6 +1,6 @@
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey, Float, BigInteger
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.orm import sessionmaker, relationship, scoped_session, joinedload
 from datetime import datetime, timedelta, UTC
 import os
 from dotenv import load_dotenv
@@ -13,8 +13,15 @@ Base = declarative_base()
 DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///vpn_bot.db')
 ADMIN_IDS = [int(id.strip()) for id in os.getenv('ADMIN_IDS', '').split(',') if id.strip()]
 
+# Создаем движок базы данных
 engine = create_engine(DATABASE_URL)
+
+# Создаем фабрику сессий
 Session = sessionmaker(bind=engine)
+
+def get_session():
+    """Создает новую сессию базы данных"""
+    return Session()
 
 class Country(Base):
     """Модель страны"""
@@ -44,10 +51,12 @@ class User(Base):
 
     def get_active_subscription(self):
         """Получить активную подписку пользователя"""
-        session = Session()
+        session = get_session()
         try:
             now = datetime.now(UTC)
-            return session.query(Subscription).filter(
+            return session.query(Subscription).options(
+                joinedload(Subscription.server)
+            ).filter(
                 Subscription.user_id == self.telegram_id,
                 Subscription.is_active == True,
                 Subscription.start_date <= now,
@@ -82,7 +91,7 @@ class User(Base):
             session: Существующая сессия SQLAlchemy (опционально)
         """
         if session is None:
-            session = Session()
+            session = get_session()
             should_close = True
         else:
             should_close = False
@@ -148,27 +157,30 @@ class VPNServer(Base):
 
 def init_db():
     """Инициализация базы данных"""
+    # Создаем все таблицы
     Base.metadata.create_all(engine)
     
     # Создаем сессию
-    session = Session()
+    session = get_session()
     
-    # Добавляем администраторов
-    for admin_id in ADMIN_IDS:
-        existing_admin = session.query(User).filter_by(telegram_id=admin_id).first()
-        if not existing_admin:
-            admin = User(
-                telegram_id=admin_id,
-                is_active=True
-            )
-            session.add(admin)
-        else:
-            # Обновляем статус существующего пользователя
-            existing_admin.is_active = True
-    
-    # Сохраняем изменения
-    session.commit()
-    session.close()
+    try:
+        # Добавляем администраторов
+        for admin_id in ADMIN_IDS:
+            existing_admin = session.query(User).filter_by(telegram_id=admin_id).first()
+            if not existing_admin:
+                admin = User(
+                    telegram_id=admin_id,
+                    is_active=True
+                )
+                session.add(admin)
+            else:
+                # Обновляем статус существующего пользователя
+                existing_admin.is_active = True
+        
+        # Сохраняем изменения
+        session.commit()
+    finally:
+        session.close()
 
 def get_or_create_user(telegram_user, session=None):
     """Получить или создать пользователя
@@ -178,7 +190,7 @@ def get_or_create_user(telegram_user, session=None):
         session: Существующая сессия SQLAlchemy (опционально)
     """
     if session is None:
-        session = Session()
+        session = get_session()
         should_close = True
     else:
         should_close = False
@@ -214,7 +226,7 @@ def create_trial_subscription(user, session=None):
         session: Существующая сессия SQLAlchemy (опционально)
     """
     if session is None:
-        session = Session()
+        session = get_session()
         should_close = True
     else:
         should_close = False
@@ -256,7 +268,7 @@ def delete_user(telegram_id: int, session=None):
         bool: True если пользователь был удален, False если пользователь не найден
     """
     if session is None:
-        session = Session()
+        session = get_session()
         should_close = True
     else:
         should_close = False
