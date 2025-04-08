@@ -39,6 +39,12 @@ def get_main_keyboard():
         [InlineKeyboardButton(text="🛟 Техническая поддержка", url=SUPPORT_CHAT_URL)]
     ])
 
+def get_back_keyboard():
+    """Создание клавиатуры с кнопкой назад"""
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="◀️ Назад в главное меню", callback_data="back_to_main")
+    ]])
+
 def get_subscription_keyboard():
     """Создание клавиатуры с подписками"""
     keyboard = []
@@ -49,7 +55,7 @@ def get_subscription_keyboard():
                 callback_data=f"buy_{months}"
             )
         ])
-    keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_main")])
+    keyboard.append([InlineKeyboardButton(text="◀️ Назад в главное меню", callback_data="back_to_main")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 @dp.message(Command("start"))
@@ -70,12 +76,18 @@ async def cmd_start(message: types.Message):
 async def process_callback(callback_query: types.CallbackQuery):
     """Обработчик callback-запросов"""
     if callback_query.data == "back_to_main":
-        await callback_query.message.edit_text(
+        # Удаляем предыдущее сообщение
+        await callback_query.message.delete()
+        # Отправляем новое сообщение с главным меню
+        await callback_query.message.answer(
             "Выберите нужный пункт меню:",
             reply_markup=get_main_keyboard()
         )
     elif callback_query.data == "show_prices":
-        await callback_query.message.edit_text(
+        # Удаляем предыдущее сообщение
+        await callback_query.message.delete()
+        # Отправляем новое сообщение с выбором периода
+        await callback_query.message.answer(
             "Выберите период подписки:",
             reply_markup=get_subscription_keyboard()
         )
@@ -86,6 +98,10 @@ async def process_callback(callback_query: types.CallbackQuery):
         # Создаем счет для оплаты звездами
         prices = [LabeledPrice(label=f"VPN на {months} мес.", amount=stars)]
         
+        # Удаляем предыдущее сообщение
+        await callback_query.message.delete()
+        
+        # Отправляем инвойс
         await bot.send_invoice(
             callback_query.from_user.id,
             title=f"VPN подписка на {months} мес.",
@@ -102,14 +118,13 @@ async def process_callback(callback_query: types.CallbackQuery):
             is_flexible=False
         )
         
-        await callback_query.message.edit_text(
+        # Отправляем сообщение с кнопкой назад
+        await callback_query.message.answer(
             f"Счет на оплату создан!\n\n"
             f"Период: {months} месяц(ев)\n"
             f"Стоимость: {stars} ⭐️\n\n"
             f"Для оплаты нажмите кнопку выше.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="◀️ Назад", callback_data="show_prices")
-            ]])
+            reply_markup=get_back_keyboard()
         )
     elif callback_query.data == "get_trial":
         session = Session()
@@ -120,6 +135,9 @@ async def process_callback(callback_query: types.CallbackQuery):
                 # Если пользователя нет, создаем его
                 user = get_or_create_user(callback_query.from_user, session)
             
+            # Удаляем предыдущее сообщение
+            await callback_query.message.delete()
+            
             # Проверяем использование пробного периода
             if user.has_used_trial(session):
                 await callback_query.message.answer(
@@ -129,10 +147,11 @@ async def process_callback(callback_query: types.CallbackQuery):
             else:
                 subscription = create_trial_subscription(user, session)
                 if subscription:
-                    await callback_query.message.answer(
+                    success_message = await callback_query.message.answer(
                         "🎉 Поздравляем!\n\n"
                         "Вам предоставлен бесплатный пробный период на 7 дней.\n"
-                        "Наслаждайтесь безопасным и быстрым VPN!"
+                        "Наслаждайтесь безопасным и быстрым VPN!",
+                        reply_markup=get_back_keyboard()
                     )
                     
                     # Создаем и отправляем конфигурацию V2Ray
@@ -140,7 +159,8 @@ async def process_callback(callback_query: types.CallbackQuery):
                     if not success:
                         await callback_query.message.answer(
                             "❌ Возникла ошибка при создании конфигурации.\n"
-                            "Пожалуйста, обратитесь в техподдержку."
+                            "Пожалуйста, обратитесь в техподдержку.",
+                            reply_markup=get_back_keyboard()
                         )
                 else:
                     await callback_query.message.answer(
@@ -149,6 +169,9 @@ async def process_callback(callback_query: types.CallbackQuery):
                     )
         finally:
             session.close()
+            
+    # Отвечаем на callback, чтобы убрать часики на кнопке
+    await callback_query.answer()
 
 @dp.pre_checkout_query()
 async def process_pre_checkout_query(pre_checkout_query: types.PreCheckoutQuery):
@@ -191,12 +214,14 @@ async def process_successful_payment(message: types.Message):
                     f"✅ Оплата успешно получена!\n\n"
                     f"Ваша подписка активирована на {months} месяц(ев).\n"
                     f"Срок действия: до {subscription.end_date.strftime('%d.%m.%Y')}\n\n"
-                    f"Конфигурация V2Ray отправлена отдельным сообщением."
+                    f"Конфигурация V2Ray отправлена отдельным сообщением.",
+                    reply_markup=get_back_keyboard()
                 )
             else:
                 await message.answer(
                     f"✅ Оплата успешно получена, но возникла ошибка при создании конфигурации.\n"
-                    f"Пожалуйста, обратитесь в техподдержку."
+                    f"Пожалуйста, обратитесь в техподдержку.",
+                    reply_markup=get_back_keyboard()
                 )
         finally:
             session.close()
@@ -205,7 +230,7 @@ async def process_successful_payment(message: types.Message):
         await message.answer(
             "❌ Произошла ошибка при обработке платежа. "
             "Пожалуйста, обратитесь в техподдержку.",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_back_keyboard()
         )
 
 async def main():

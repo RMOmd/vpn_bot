@@ -1,13 +1,15 @@
 {
-  "v": "2",
-  "ps": "VPN Bot Client 40916643",
-  "add": "your.server.ip",
-  "port": 443,
-  "id": "e2fbdb6f-429e-4fae-80aa-aab91d5bc0ef",
-  "aid": 0,
-  "net": "ws",
-  "type": "none",
-  "host": "",
-  "path": "/v2ray",
-  "tls": ""
+    "v": "2",
+    "ps": "VPN Bot - 15.04.2025",
+    "add": "your.server.ip",
+    "port": "443",
+    "id": "31506918-edae-4dc8-9e96-ba12067d0f48",
+    "aid": "0",
+    "net": "ws",
+    "type": "none",
+    "host": "your.server.ip",
+    "path": "/ws",
+    "tls": "tls",
+    "sni": "your.server.ip",
+    "expiry": "2025-04-15T16:15:09.186376+00:00"
 }
