@@ -8,7 +8,7 @@ from config import (
     SUBSCRIPTION_PRICES,
     SUPPORT_CHAT_URL
 )
-from database import init_db, get_or_create_user, create_trial_subscription, Session, User, Subscription
+from database import init_db, get_or_create_user, create_trial_subscription, Session, User, Subscription, Country, VPNServer
 from admin import register_admin_handlers
 from v2ray import V2RayManager
 from datetime import datetime, timedelta, UTC
@@ -25,17 +25,14 @@ dp = Dispatcher()
 # Регистрация хендлеров админки
 register_admin_handlers(dp)
 
-# Инициализация V2Ray менеджера
-v2ray_manager = V2RayManager(
-    server_host=os.getenv('V2RAY_SERVER_HOST'),
-    server_port=int(os.getenv('V2RAY_SERVER_PORT', 443))
-)
+# Инициализация менеджера V2Ray
+v2ray_manager = V2RayManager()
 
 def get_main_keyboard():
     """Создание основной клавиатуры"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎁 Получить пробный период (7 дней)", callback_data="get_trial")],
-        [InlineKeyboardButton(text="💎 Купить VPN", callback_data="show_prices")],
+        [InlineKeyboardButton(text="💎 Купить VPN", callback_data="select_country")],
         [InlineKeyboardButton(text="🛟 Техническая поддержка", url=SUPPORT_CHAT_URL)]
     ])
 
@@ -45,17 +42,35 @@ def get_back_keyboard():
         InlineKeyboardButton(text="◀️ Назад в главное меню", callback_data="back_to_main")
     ]])
 
-def get_subscription_keyboard():
-    """Создание клавиатуры с подписками"""
+def get_countries_keyboard():
+    """Создание клавиатуры со списком стран"""
+    session = Session()
+    try:
+        countries = session.query(Country).filter_by(is_active=True).all()
+        keyboard = []
+        for country in countries:
+            keyboard.append([
+                InlineKeyboardButton(
+                    text=f"{country.flag} {country.name}",
+                    callback_data=f"country_{country.id}"
+                )
+            ])
+        keyboard.append([InlineKeyboardButton(text="◀️ Назад в главное меню", callback_data="back_to_main")])
+        return InlineKeyboardMarkup(inline_keyboard=keyboard)
+    finally:
+        session.close()
+
+def get_duration_keyboard(country_id: int):
+    """Создание клавиатуры с выбором длительности подписки"""
     keyboard = []
     for months, stars in SUBSCRIPTION_PRICES.items():
         keyboard.append([
             InlineKeyboardButton(
                 text=f"{months} месяц(ев) - {stars} ⭐️",
-                callback_data=f"buy_{months}"
+                callback_data=f"duration_{country_id}_{months}"
             )
         ])
-    keyboard.append([InlineKeyboardButton(text="◀️ Назад в главное меню", callback_data="back_to_main")])
+    keyboard.append([InlineKeyboardButton(text="◀️ Назад к выбору страны", callback_data="select_country")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 @dp.message(Command("start"))
@@ -76,29 +91,33 @@ async def cmd_start(message: types.Message):
 async def process_callback(callback_query: types.CallbackQuery):
     """Обработчик callback-запросов"""
     if callback_query.data == "back_to_main":
-        # Удаляем предыдущее сообщение
         await callback_query.message.delete()
-        # Отправляем новое сообщение с главным меню
         await callback_query.message.answer(
             "Выберите нужный пункт меню:",
             reply_markup=get_main_keyboard()
         )
-    elif callback_query.data == "show_prices":
-        # Удаляем предыдущее сообщение
+    elif callback_query.data == "select_country":
         await callback_query.message.delete()
-        # Отправляем новое сообщение с выбором периода
+        await callback_query.message.answer(
+            "Выберите страну для VPN:",
+            reply_markup=get_countries_keyboard()
+        )
+    elif callback_query.data.startswith("country_"):
+        country_id = int(callback_query.data.split("_")[1])
+        await callback_query.message.delete()
         await callback_query.message.answer(
             "Выберите период подписки:",
-            reply_markup=get_subscription_keyboard()
+            reply_markup=get_duration_keyboard(country_id)
         )
-    elif callback_query.data.startswith("buy_"):
-        months = int(callback_query.data.split("_")[1])
+    elif callback_query.data.startswith("duration_"):
+        _, country_id, months = callback_query.data.split("_")
+        country_id = int(country_id)
+        months = int(months)
         stars = SUBSCRIPTION_PRICES[months]
         
         # Создаем счет для оплаты звездами
         prices = [LabeledPrice(label=f"VPN на {months} мес.", amount=stars)]
         
-        # Удаляем предыдущее сообщение
         await callback_query.message.delete()
         
         # Отправляем инвойс
@@ -106,7 +125,7 @@ async def process_callback(callback_query: types.CallbackQuery):
             callback_query.from_user.id,
             title=f"VPN подписка на {months} мес.",
             description=f"Подписка на VPN сервис на {months} месяц(ев)",
-            payload=f"sub_{months}_{callback_query.from_user.id}",
+            payload=f"sub_{country_id}_{months}_{callback_query.from_user.id}",
             provider_token="",  # Не нужен для звезд
             currency="XTR",
             prices=prices,
@@ -129,20 +148,16 @@ async def process_callback(callback_query: types.CallbackQuery):
     elif callback_query.data == "get_trial":
         session = Session()
         try:
-            # Получаем пользователя в текущей сессии
             user = session.query(User).filter_by(telegram_id=callback_query.from_user.id).first()
             if not user:
-                # Если пользователя нет, создаем его
                 user = get_or_create_user(callback_query.from_user, session)
             
-            # Удаляем предыдущее сообщение
             await callback_query.message.delete()
             
-            # Проверяем использование пробного периода
             if user.has_used_trial(session):
                 await callback_query.message.answer(
                     "Вы уже использовали пробный период. Выберите тариф для покупки подписки:",
-                    reply_markup=get_subscription_keyboard()
+                    reply_markup=get_countries_keyboard()
                 )
             else:
                 subscription = create_trial_subscription(user, session)
@@ -154,7 +169,6 @@ async def process_callback(callback_query: types.CallbackQuery):
                         reply_markup=get_back_keyboard()
                     )
                     
-                    # Создаем и отправляем конфигурацию V2Ray
                     success, client_uuid = await v2ray_manager.create_and_send_config(callback_query.from_user.id, bot)
                     if not success:
                         await callback_query.message.answer(
@@ -165,12 +179,11 @@ async def process_callback(callback_query: types.CallbackQuery):
                 else:
                     await callback_query.message.answer(
                         "Вы уже использовали пробный период. Выберите тариф для покупки подписки:",
-                        reply_markup=get_subscription_keyboard()
+                        reply_markup=get_countries_keyboard()
                     )
         finally:
             session.close()
             
-    # Отвечаем на callback, чтобы убрать часики на кнопке
     await callback_query.answer()
 
 @dp.pre_checkout_query()
@@ -183,21 +196,36 @@ async def process_successful_payment(message: types.Message):
     """Обработчик успешного платежа"""
     try:
         # Получаем информацию о подписке из payload
-        _, months, user_id = message.successful_payment.invoice_payload.split("_")
+        _, country_id, months, user_id = message.successful_payment.invoice_payload.split("_")
+        country_id = int(country_id)
         months = int(months)
         user_id = int(user_id)
         
         # Создаем подписку
         session = Session()
         try:
-            # Получаем пользователя в текущей сессии
             user = session.query(User).filter_by(telegram_id=user_id).first()
             if not user:
-                # Если пользователя нет, создаем его
                 user = get_or_create_user(message.from_user, session)
+            
+            # Выбираем активный сервер для выбранной страны
+            server = session.query(VPNServer).filter_by(
+                country_id=country_id,
+                is_active=True
+            ).first()
+            
+            if not server:
+                await message.answer(
+                    "❌ Нет доступных серверов для выбранной страны. "
+                    "Пожалуйста, обратитесь в техподдержку.",
+                    reply_markup=get_back_keyboard()
+                )
+                return
                 
             subscription = Subscription(
                 user_id=user.telegram_id,
+                country_id=country_id,
+                server_id=server.id,
                 start_date=datetime.now(UTC),
                 end_date=datetime.now(UTC) + timedelta(days=30*months),
                 price=SUBSCRIPTION_PRICES[months],
@@ -207,7 +235,6 @@ async def process_successful_payment(message: types.Message):
             session.add(subscription)
             session.commit()
             
-            # Создаем и отправляем конфигурацию V2Ray
             success, client_uuid = await v2ray_manager.create_and_send_config(user_id, bot)
             if success:
                 await message.answer(
@@ -232,6 +259,43 @@ async def process_successful_payment(message: types.Message):
             "Пожалуйста, обратитесь в техподдержку.",
             reply_markup=get_back_keyboard()
         )
+
+def create_trial_subscription(user, session):
+    """Создание пробной подписки"""
+    # Проверяем, есть ли у пользователя активная подписка
+    active_sub = user.get_active_subscription()
+    if active_sub:
+        return None
+        
+    # Выбираем случайную страну с активными серверами
+    country = session.query(Country).filter_by(is_active=True).first()
+    if not country:
+        return None
+        
+    # Выбираем активный сервер для выбранной страны
+    server = session.query(VPNServer).filter_by(
+        country_id=country.id,
+        is_active=True
+    ).first()
+    
+    if not server:
+        return None
+        
+    # Создаем пробную подписку
+    subscription = Subscription(
+        user_id=user.telegram_id,
+        country_id=country.id,
+        server_id=server.id,
+        start_date=datetime.now(UTC),
+        end_date=datetime.now(UTC) + timedelta(days=7),
+        price=0,
+        is_trial=True,
+        is_active=True,
+        payment_type="trial"
+    )
+    session.add(subscription)
+    session.commit()
+    return subscription
 
 async def main():
     # Инициализация базы данных

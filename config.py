@@ -47,6 +47,14 @@ DEVELOPER_ID = int(os.getenv('DEVELOPER_ID', '0'))
 # Настройки V2Ray
 V2RAY_SERVER_HOST = os.getenv('V2RAY_SERVER_HOST', 'your.server.ip')
 V2RAY_SERVER_PORT = int(os.getenv('V2RAY_SERVER_PORT', '443'))
+V2RAY_SERVER_PASSWORD = os.getenv('V2RAY_SERVER_PASSWORD', 'your_password')
+V2RAY_SERVER_UUID = os.getenv('V2RAY_SERVER_UUID', 'your_uuid')
+V2RAY_SERVER_ALTER_ID = int(os.getenv('V2RAY_SERVER_ALTER_ID', '0'))
+V2RAY_SERVER_NETWORK = os.getenv('V2RAY_SERVER_NETWORK', 'tcp')
+V2RAY_SERVER_TYPE = os.getenv('V2RAY_SERVER_TYPE', 'none')
+V2RAY_SERVER_TLS = os.getenv('V2RAY_SERVER_TLS', 'tls')
+V2RAY_SERVER_PATH = os.getenv('V2RAY_SERVER_PATH', '')
+V2RAY_SERVER_HOSTNAME = os.getenv('V2RAY_SERVER_HOSTNAME', '')
 
 # Настройки поддержки
 SUPPORT_CHAT_URL = os.getenv('SUPPORT_CHAT_URL', 'https://t.me/your_support_chat')

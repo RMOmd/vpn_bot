@@ -4,7 +4,7 @@ from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime, timedelta, UTC
 import os
 from dotenv import load_dotenv
-from config import DEVELOPER_ID
+from config import DEVELOPER_ID, DATABASE_URL
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -16,15 +16,29 @@ ADMIN_IDS = [int(id.strip()) for id in os.getenv('ADMIN_IDS', '').split(',') if 
 engine = create_engine(DATABASE_URL)
 Session = sessionmaker(bind=engine)
 
+class Country(Base):
+    """Модель страны"""
+    __tablename__ = 'countries'
+    
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    flag = Column(String, nullable=False)  # Эмодзи флага
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.now(UTC))
+    
+    # Связь с подписками
+    subscriptions = relationship("Subscription", back_populates="country")
+    # Связь с серверами
+    servers = relationship("VPNServer", back_populates="country")
+
 class User(Base):
     __tablename__ = 'users'
     
-    id = Column(Integer, primary_key=True)
-    telegram_id = Column(BigInteger, unique=True)
+    telegram_id = Column(Integer, primary_key=True)
     username = Column(String)
     first_name = Column(String)
     last_name = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now(UTC))
     is_active = Column(Boolean, default=False)
     subscriptions = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")
 
@@ -89,23 +103,48 @@ class User(Base):
         return active_sub and not active_sub.is_trial
 
 class Subscription(Base):
+    """Модель подписки"""
     __tablename__ = 'subscriptions'
     
     id = Column(Integer, primary_key=True)
-    user_id = Column(BigInteger, ForeignKey('users.telegram_id'))
-    start_date = Column(DateTime, default=datetime.utcnow)
+    user_id = Column(Integer, ForeignKey('users.telegram_id'))
+    country_id = Column(Integer, ForeignKey('countries.id'))
+    server_id = Column(Integer, ForeignKey('vpn_servers.id'))
+    start_date = Column(DateTime, default=datetime.now(UTC))
     end_date = Column(DateTime)
     price = Column(Float)
     is_trial = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
-    payment_type = Column(String)
+    payment_type = Column(String)  # stars, crypto, etc.
     stars_paid = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.now(UTC))
     
+    # Связи
     user = relationship("User", back_populates="subscriptions")
+    country = relationship("Country", back_populates="subscriptions")
+    server = relationship("VPNServer", back_populates="subscriptions")
 
     def is_expired(self):
         """Проверить, истекла ли подписка"""
         return datetime.now(UTC) > self.end_date
+
+class VPNServer(Base):
+    """Модель VPN сервера"""
+    __tablename__ = 'vpn_servers'
+    
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    host = Column(String, nullable=False)
+    port = Column(Integer, nullable=False)
+    password = Column(String, nullable=False)
+    country_id = Column(Integer, ForeignKey('countries.id'), nullable=False)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.now(UTC))
+    
+    # Связь с подписками
+    subscriptions = relationship("Subscription", back_populates="server")
+    # Связь со страной
+    country = relationship("Country", back_populates="servers")
 
 def init_db():
     """Инициализация базы данных"""
@@ -234,4 +273,16 @@ def delete_user(telegram_id: int, session=None):
         return False
     finally:
         if should_close:
-            session.close() 
+            session.close()
+
+def get_active_subscription(user_id: int, session) -> Subscription:
+    """Получение активной подписки пользователя"""
+    return session.query(Subscription).filter_by(
+        user_id=user_id,
+        is_active=True
+    ).first()
+
+def deactivate_subscription(subscription: Subscription, session):
+    """Деактивация подписки"""
+    subscription.is_active = False
+    session.commit() 

@@ -6,13 +6,95 @@ from datetime import datetime, UTC, timedelta
 from typing import Optional, Tuple
 import qrcode
 from io import BytesIO
+from aiogram import Bot
 from aiogram.types import FSInputFile
+from sqlalchemy.orm import Session
+from database import Subscription, Session as DBSession
+from log import logger
 
 class V2RayManager:
-    def __init__(self, server_host: str, server_port: int):
-        self.server_host = server_host
-        self.server_port = server_port
-        
+    """Менеджер для работы с V2Ray"""
+    
+    def __init__(self):
+        self.config_dir = "configs"
+        if not os.path.exists(self.config_dir):
+            os.makedirs(self.config_dir)
+    
+    async def create_and_send_config(self, user_id: int, bot: Bot) -> Tuple[bool, Optional[str]]:
+        """Создать и отправить конфигурацию пользователю"""
+        session = DBSession()
+        try:
+            # Получаем активную подписку пользователя
+            subscription = session.query(Subscription).filter_by(
+                user_id=user_id,
+                is_active=True
+            ).first()
+            
+            if not subscription:
+                logger.error(f"Нет активной подписки для пользователя {user_id}")
+                return False, None
+                
+            if not subscription.server:
+                logger.error(f"Нет сервера для подписки {subscription.id}")
+                return False, None
+            
+            # Генерируем UUID для пользователя
+            client_uuid = str(uuid.uuid4())
+            
+            # Создаем конфигурацию
+            config = {
+                "v": "2",
+                "ps": f"{subscription.server.name} - {subscription.country.name}",
+                "add": subscription.server.host,
+                "port": subscription.server.port,
+                "id": client_uuid,
+                "aid": 0,
+                "net": "tcp",
+                "type": "none",
+                "host": "",
+                "path": "",
+                "tls": "tls"
+            }
+            
+            # Кодируем конфигурацию в base64
+            config_str = json.dumps(config)
+            config_b64 = base64.b64encode(config_str.encode()).decode()
+            vmess_url = f"vmess://{config_b64}"
+            
+            # Создаем QR-код
+            qr = qrcode.QRCode(version=1, box_size=10, border=5)
+            qr.add_data(vmess_url)
+            qr.make(fit=True)
+            qr_img = qr.make_image(fill_color="black", back_color="white")
+            
+            # Сохраняем QR-код
+            qr_path = os.path.join(self.config_dir, f"{user_id}_qr.png")
+            qr_img.save(qr_path)
+            
+            # Отправляем сообщение пользователю
+            await bot.send_message(
+                user_id,
+                f"✅ Ваша конфигурация V2Ray:\n\n"
+                f"Сервер: {subscription.server.name}\n"
+                f"Страна: {subscription.country.name}\n\n"
+                f"```{vmess_url}```",
+                parse_mode="Markdown"
+            )
+            
+            # Отправляем QR-код
+            await bot.send_photo(
+                user_id,
+                photo=FSInputFile(qr_path)
+            )
+            
+            return True, client_uuid
+            
+        except Exception as e:
+            logger.error(f"Ошибка при создании конфигурации: {e}")
+            return False, None
+        finally:
+            session.close()
+
     def generate_client_config(self, user_id: int, expiry_days: int = 7) -> Tuple[dict, str]:
         """Генерация конфигурации клиента
         
@@ -96,62 +178,6 @@ class V2RayManager:
         
         return qr_path
         
-    async def create_and_send_config(self, user_id: int, bot, expiry_days: int = 7) -> Tuple[bool, Optional[str]]:
-        """Создание и отправка конфигурации пользователю
-        
-        Args:
-            user_id: ID пользователя
-            bot: Объект бота для отправки сообщений
-            expiry_days: Срок действия в днях
-            
-        Returns:
-            Tuple[bool, Optional[str]]: Успех операции и UUID клиента
-        """
-        try:
-            # Генерируем конфигурацию
-            config, client_uuid = self.generate_client_config(user_id, expiry_days)
-            
-            # Сохраняем конфигурацию
-            config_path = self.save_client_config(user_id, config)
-            
-            # Генерируем vmess ссылку и QR код
-            vmess_link = self.generate_vmess_link(config)
-            qr_path = self.generate_qr_code(vmess_link)
-            
-            # Отправляем информацию пользователю
-            await bot.send_message(
-                user_id,
-                "📱 Для подключения VPN выполните следующие шаги:\n\n"
-                "1. Установите приложение V2RayNG:\n"
-                "• Android: https://play.google.com/store/apps/details?id=com.v2ray.ang\n"
-                "• iOS: https://apps.apple.com/us/app/v2box-v2ray-client/id6446814690\n\n"
-                "2. Отсканируйте QR код ниже или импортируйте конфигурацию из файла\n\n"
-                "3. Нажмите кнопку подключения в приложении\n\n"
-                "🔗 Ссылка для импорта:\n"
-                f"`{vmess_link}`",
-                parse_mode="Markdown"
-            )
-            
-            # Отправляем QR код
-            qr_file = FSInputFile(qr_path)
-            await bot.send_photo(user_id, qr_file, caption="QR код для быстрого импорта")
-            
-            # Отправляем файл конфигурации
-            config_file = FSInputFile(config_path)
-            await bot.send_document(
-                user_id,
-                config_file,
-                caption="Файл конфигурации V2Ray"
-            )
-            
-            # Удаляем временный файл QR кода
-            os.remove(qr_path)
-            
-            return True, client_uuid
-        except Exception as e:
-            print(f"Ошибка при создании конфигурации: {e}")
-            return False, None
-            
     def check_config_expiry(self, config: dict) -> bool:
         """Проверка срока действия конфигурации
         
