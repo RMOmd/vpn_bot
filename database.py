@@ -30,12 +30,17 @@ class User(Base):
 
     def get_active_subscription(self):
         """Получить активную подписку пользователя"""
-        now = datetime.now(UTC)
-        return self.subscriptions.filter(
-            Subscription.is_active == True,
-            Subscription.start_date <= now,
-            Subscription.end_date >= now
-        ).first()
+        session = Session()
+        try:
+            now = datetime.now(UTC)
+            return session.query(Subscription).filter(
+                Subscription.user_id == self.telegram_id,
+                Subscription.is_active == True,
+                Subscription.start_date <= now,
+                Subscription.end_date >= now
+            ).first()
+        finally:
+            session.close()
     
     def get_days_left(self):
         """Получить количество оставшихся дней подписки"""
@@ -197,6 +202,36 @@ def create_trial_subscription(user, session=None):
         session.add(subscription)
         session.commit()
         return subscription
+    finally:
+        if should_close:
+            session.close()
+
+def delete_user(telegram_id: int, session=None):
+    """Удалить пользователя и все его подписки
+    
+    Args:
+        telegram_id: Telegram ID пользователя
+        session: Существующая сессия SQLAlchemy (опционально)
+    
+    Returns:
+        bool: True если пользователь был удален, False если пользователь не найден
+    """
+    if session is None:
+        session = Session()
+        should_close = True
+    else:
+        should_close = False
+        
+    try:
+        user = session.query(User).filter_by(telegram_id=telegram_id).first()
+        if user:
+            # Удаляем все подписки пользователя
+            session.query(Subscription).filter_by(user_id=telegram_id).delete()
+            # Удаляем самого пользователя
+            session.delete(user)
+            session.commit()
+            return True
+        return False
     finally:
         if should_close:
             session.close() 
