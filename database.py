@@ -33,10 +33,9 @@ class Country(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.now(UTC))
     
-    # Связь с подписками
-    subscriptions = relationship("Subscription", back_populates="country")
-    # Связь с серверами
+    # Связи
     servers = relationship("VPNServer", back_populates="country")
+    subscriptions = relationship("Subscription", back_populates="country")
 
 class User(Base):
     __tablename__ = 'users'
@@ -47,6 +46,11 @@ class User(Base):
     last_name = Column(String)
     created_at = Column(DateTime, default=datetime.now(UTC))
     is_active = Column(Boolean, default=False)
+    device_id = Column(String, unique=True)  # Уникальный идентификатор устройства
+    client_app = Column(String)  # Информация о клиентском приложении
+    last_ip = Column(String)  # Последний известный IP-адрес
+    last_mac = Column(String)  # MAC-адрес устройства
+    last_seen = Column(DateTime)  # Время последней активности
     subscriptions = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")
 
     def get_active_subscription(self):
@@ -111,6 +115,30 @@ class User(Base):
         active_sub = self.get_active_subscription()
         return active_sub and not active_sub.is_trial
 
+    def update_device_info(self, device_id: str, client_app: str, ip: str = None, mac: str = None):
+        """Обновляет информацию об устройстве пользователя"""
+        self.device_id = device_id
+        self.client_app = client_app
+        if ip:
+            self.last_ip = ip
+        if mac:
+            self.last_mac = mac
+        self.last_seen = datetime.now(UTC)
+
+    def get_device_info(self) -> dict:
+        """Возвращает информацию об устройстве пользователя"""
+        return {
+            'device_id': self.device_id,
+            'client_app': self.client_app,
+            'last_ip': self.last_ip,
+            'last_mac': self.last_mac,
+            'last_seen': self.last_seen
+        }
+
+    def is_device_authorized(self, device_id: str) -> bool:
+        """Проверяет, авторизовано ли устройство для пользователя"""
+        return self.device_id == device_id
+
 class Subscription(Base):
     """Модель подписки"""
     __tablename__ = 'subscriptions'
@@ -119,6 +147,7 @@ class Subscription(Base):
     user_id = Column(Integer, ForeignKey('users.telegram_id'))
     country_id = Column(Integer, ForeignKey('countries.id'))
     server_id = Column(Integer, ForeignKey('vpn_servers.id'))
+    uuid = Column(String, unique=True)  # UUID для V2Ray
     start_date = Column(DateTime, default=datetime.now(UTC))
     end_date = Column(DateTime)
     price = Column(Float)
@@ -145,14 +174,12 @@ class VPNServer(Base):
     name = Column(String, nullable=False)
     host = Column(String, nullable=False)
     port = Column(Integer, nullable=False)
-    password = Column(String, nullable=False)
     country_id = Column(Integer, ForeignKey('countries.id'), nullable=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.now(UTC))
     
-    # Связь с подписками
+    # Связи
     subscriptions = relationship("Subscription", back_populates="server")
-    # Связь со страной
     country = relationship("Country", back_populates="servers")
 
 def init_db():

@@ -1,0 +1,15 @@
+[Unit]
+Description=VPN Manager Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/g/1111/я/vpn_bot
+Environment=DATABASE_URL=sqlite:///bot.db
+ExecStart=/usr/bin/python3 server_manager.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target 

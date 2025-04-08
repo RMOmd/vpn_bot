@@ -24,8 +24,8 @@ logger = logging.getLogger(__name__)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Регистрация хендлеров админки
-register_admin_handlers(dp)
+# Регистрация обработчиков
+register_admin_handlers(dp, bot)
 
 # Инициализация менеджера V2Ray
 v2ray_manager = V2RayManager()
@@ -311,6 +311,7 @@ async def cmd_admin(message: types.Message):
         [InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users")],
         [InlineKeyboardButton(text="💰 Финансы", callback_data="admin_finance")],
         [InlineKeyboardButton(text="🔑 Управление VPN", callback_data="admin_vpn")],
+        [InlineKeyboardButton(text="🌍 Управление странами", callback_data="admin_countries")],
         [InlineKeyboardButton(text="◀️ В главное меню", callback_data="back_to_main")]
     ])
 

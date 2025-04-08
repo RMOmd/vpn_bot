@@ -48,12 +48,13 @@ class V2RayManager:
                 "add": subscription.server.host,
                 "port": subscription.server.port,
                 "id": client_uuid,
-                "aid": 0,
-                "net": "tcp",
-                "type": "none",
-                "host": "",
-                "path": "",
-                "tls": "tls"
+                "aid": subscription.server.alter_id,
+                "net": subscription.server.network,
+                "type": subscription.server.type,
+                "host": subscription.server.hostname or subscription.server.host,
+                "path": subscription.server.path,
+                "tls": "tls" if subscription.server.tls else "none",
+                "sni": subscription.server.hostname or subscription.server.host if subscription.server.tls else ""
             }
             
             # Кодируем конфигурацию в base64
@@ -71,21 +72,38 @@ class V2RayManager:
             qr_path = os.path.join(self.config_dir, f"{user_id}_qr.png")
             qr_img.save(qr_path)
             
+            # Формируем текст сообщения с подробной информацией
+            config_text = (
+                f"✅ Ваша конфигурация V2Ray:\n\n"
+                f"🌍 Сервер: {subscription.server.name}\n"
+                f"🏳️ Страна: {subscription.country.name}\n"
+                f"🔌 Протокол: {subscription.server.network}\n"
+                f"🔒 TLS: {'Включен' if subscription.server.tls else 'Отключен'}\n\n"
+                f"Для подключения используйте:\n"
+                f"1️⃣ QR-код (отправлен следующим сообщением)\n"
+                f"2️⃣ Ссылку для импорта:\n"
+                f"```\n{vmess_url}\n```"
+            )
+            
             # Отправляем сообщение пользователю
             await bot.send_message(
                 user_id,
-                f"✅ Ваша конфигурация V2Ray:\n\n"
-                f"Сервер: {subscription.server.name}\n"
-                f"Страна: {subscription.country.name}\n\n"
-                f"```{vmess_url}```",
+                config_text,
                 parse_mode="Markdown"
             )
             
             # Отправляем QR-код
             await bot.send_photo(
                 user_id,
-                photo=FSInputFile(qr_path)
+                photo=FSInputFile(qr_path),
+                caption="QR-код для быстрого импорта конфигурации"
             )
+            
+            # Удаляем временный файл QR-кода
+            try:
+                os.remove(qr_path)
+            except Exception as e:
+                logger.warning(f"Не удалось удалить временный файл QR-кода: {e}")
             
             return True, client_uuid
             

@@ -1,20 +1,16 @@
 from datetime import datetime, timedelta, UTC
 from aiogram import types, Bot
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
-from database import User, Subscription, VPNServer, get_session
+from database import User, Subscription, VPNServer, Country, get_session
 from config import logger
 from utils import is_admin
 from aiogram.exceptions import TelegramBadRequest
+from states import AdminStates
 
-class AdminStates(StatesGroup):
-    """Состояния для админ-панели"""
-    waiting_for_user_id = State()
-
-async def show_vpn_management(callback: types.CallbackQuery, bot: Bot):
+async def show_vpn_management(callback: types.CallbackQuery, bot: Bot, **kwargs):
     """Показать список пользователей с активными VPN конфигурациями"""
     if not await is_admin(callback.from_user.id):
         return
@@ -71,7 +67,7 @@ async def show_vpn_management(callback: types.CallbackQuery, bot: Bot):
     finally:
         session.close()
 
-async def manage_user_vpn(callback: types.CallbackQuery, bot: Bot):
+async def manage_user_vpn(callback: types.CallbackQuery, bot: Bot, **kwargs):
     """Управление VPN конкретного пользователя"""
     if not await is_admin(callback.from_user.id):
         return
@@ -130,7 +126,7 @@ async def manage_user_vpn(callback: types.CallbackQuery, bot: Bot):
     finally:
         session.close()
 
-async def toggle_user_vpn(callback: types.CallbackQuery, bot: Bot):
+async def toggle_user_vpn(callback: types.CallbackQuery, bot: Bot, **kwargs):
     """Включение/отключение VPN для пользователя"""
     if not await is_admin(callback.from_user.id):
         return
@@ -162,7 +158,7 @@ async def toggle_user_vpn(callback: types.CallbackQuery, bot: Bot):
     finally:
         session.close()
 
-async def modify_vpn_duration(callback: types.CallbackQuery, bot: Bot):
+async def modify_vpn_duration(callback: types.CallbackQuery, bot: Bot, **kwargs):
     """Изменение срока действия VPN"""
     if not await is_admin(callback.from_user.id):
         return
@@ -199,7 +195,7 @@ async def modify_vpn_duration(callback: types.CallbackQuery, bot: Bot):
     finally:
         session.close()
 
-async def show_stats(callback: types.CallbackQuery, bot: Bot):
+async def show_stats(callback: types.CallbackQuery, bot: Bot, **kwargs):
     """Показывает общую статистику"""
     if not await is_admin(callback.from_user.id):
         await callback.answer("⛔️ У вас нет доступа к админ-панели")
@@ -237,7 +233,7 @@ async def show_stats(callback: types.CallbackQuery, bot: Bot):
     finally:
         session.close()
 
-async def show_users(callback: types.CallbackQuery, bot: Bot, period: str = None):
+async def show_users(callback: types.CallbackQuery, bot: Bot, period: str = None, **kwargs):
     """Показывает список пользователей"""
     if not await is_admin(callback.from_user.id):
         await callback.answer("⛔️ У вас нет доступа к админ-панели")
@@ -320,7 +316,7 @@ async def show_users(callback: types.CallbackQuery, bot: Bot, period: str = None
     finally:
         session.close()
 
-async def process_users_period(callback: types.CallbackQuery, bot: Bot):
+async def process_users_period(callback: types.CallbackQuery, bot: Bot, **kwargs):
     """Обработчик выбора периода для списка пользователей"""
     try:
         period = callback.data.split('_')[2]  # day, week или month
@@ -329,11 +325,11 @@ async def process_users_period(callback: types.CallbackQuery, bot: Bot):
         logger.error(f"Error in process_users_period: {e}")
         await callback.answer("Произошла ошибка при обработке запроса")
 
-async def refresh_users_list(callback: types.CallbackQuery, bot: Bot):
+async def refresh_users_list(callback: types.CallbackQuery, bot: Bot, **kwargs):
     """Обновление списка пользователей"""
     await show_users(callback, bot)
 
-async def show_finance(callback: types.CallbackQuery, bot: Bot, period: str = None):
+async def show_finance(callback: types.CallbackQuery, bot: Bot, period: str = None, **kwargs):
     """Показывает финансовую статистику"""
     if not await is_admin(callback.from_user.id):
         await callback.answer("⛔️ У вас нет доступа к админ-панели")
@@ -401,7 +397,7 @@ async def show_finance(callback: types.CallbackQuery, bot: Bot, period: str = No
     finally:
         session.close()
 
-async def process_finance_period(callback: types.CallbackQuery, bot: Bot):
+async def process_finance_period(callback: types.CallbackQuery, bot: Bot, **kwargs):
     """Обработчик выбора периода для финансовой статистики"""
     try:
         period = callback.data.split('_')[2]  # day, week или month
@@ -410,11 +406,11 @@ async def process_finance_period(callback: types.CallbackQuery, bot: Bot):
         logger.error(f"Error in process_finance_period: {e}")
         await callback.answer("Произошла ошибка при обработке запроса")
 
-async def refresh_finance(callback: types.CallbackQuery, bot: Bot):
+async def refresh_finance(callback: types.CallbackQuery, bot: Bot, **kwargs):
     """Обновление финансовой статистики"""
     await show_finance(callback, bot)
 
-async def admin_back(callback: types.CallbackQuery, bot: Bot):
+async def admin_back(callback: types.CallbackQuery, bot: Bot, **kwargs):
     """Возврат в главное меню админки"""
     if not await is_admin(callback.from_user.id):
         await callback.answer("⛔️ У вас нет доступа к админ-панели")
@@ -425,12 +421,14 @@ async def admin_back(callback: types.CallbackQuery, bot: Bot):
         [InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users")],
         [InlineKeyboardButton(text="💰 Финансы", callback_data="admin_finance")],
         [InlineKeyboardButton(text="🔑 Управление VPN", callback_data="admin_vpn")],
+        [InlineKeyboardButton(text="🌍 Управление странами", callback_data="admin_countries")],
+        [InlineKeyboardButton(text="🛠️ Управление серверами", callback_data="admin_servers")],
         [InlineKeyboardButton(text="◀️ В главное меню", callback_data="back_to_main")]
     ])
 
     await callback.message.edit_text("🛠 Админ-панель", reply_markup=keyboard)
 
-async def show_users_search(callback: types.CallbackQuery, bot: Bot, state: FSMContext):
+async def show_users_search(callback: types.CallbackQuery, bot: Bot, state: FSMContext, **kwargs):
     """Показывает форму поиска пользователей"""
     if not await is_admin(callback.from_user.id):
         await callback.answer("⛔️ У вас нет доступа к админ-панели")
@@ -446,7 +444,7 @@ async def show_users_search(callback: types.CallbackQuery, bot: Bot, state: FSMC
     )
     await state.set_state(AdminStates.waiting_for_user_id)
 
-async def process_user_search(message: types.Message, bot: Bot, state: FSMContext):
+async def process_user_search(message: types.Message, bot: Bot, state: FSMContext, **kwargs):
     """Обработка поиска пользователя по ID"""
     if not await is_admin(message.from_user.id):
         return
@@ -504,21 +502,497 @@ async def process_user_search(message: types.Message, bot: Bot, state: FSMContex
     finally:
         session.close()
 
-def register_admin_handlers(dp):
+async def show_countries_management(callback: types.CallbackQuery, bot: Bot, **kwargs):
+    """Показать список стран и управление ими"""
+    if not await is_admin(callback.from_user.id):
+        return
+        
+    session = get_session()
+    try:
+        # Получаем все страны
+        countries = session.query(Country).all()
+        
+        text = "🌍 Управление странами:\n\n"
+        keyboard = []
+        
+        for country in countries:
+            status = "✅" if country.is_active else "❌"
+            text += f"{status} {country.flag} {country.name}\n"
+            
+            # Добавляем кнопки управления для каждой страны
+            keyboard.append([
+                InlineKeyboardButton(
+                    text=f"{'🔴 Отключить' if country.is_active else '🟢 Включить'} {country.flag}",
+                    callback_data=f"country_toggle_{country.id}"
+                ),
+                InlineKeyboardButton(
+                    text=f"🗑 Удалить {country.flag}",
+                    callback_data=f"country_delete_{country.id}"
+                )
+            ])
+        
+        # Добавляем кнопку добавления новой страны и возврата
+        keyboard.extend([
+            [InlineKeyboardButton(text="➕ Добавить страну", callback_data="country_add")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_back")]
+        ])
+        
+        markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+        await callback.message.edit_text(text, reply_markup=markup)
+    finally:
+        session.close()
+
+async def toggle_country(callback: types.CallbackQuery, bot: Bot, **kwargs):
+    """Включение/отключение страны"""
+    if not await is_admin(callback.from_user.id):
+        return
+        
+    country_id = int(callback.data.split('_')[2])
+    session = get_session()
+    
+    try:
+        country = session.query(Country).filter_by(id=country_id).first()
+        if country:
+            country.is_active = not country.is_active
+            session.commit()
+            status = "включена" if country.is_active else "отключена"
+            await callback.answer(f"Страна {country.flag} {country.name} {status}")
+        else:
+            await callback.answer("Страна не найдена")
+        
+        # Обновляем список стран
+        await show_countries_management(callback, bot)
+    finally:
+        session.close()
+
+async def delete_country(callback: types.CallbackQuery, bot: Bot, **kwargs):
+    """Удаление страны"""
+    if not await is_admin(callback.from_user.id):
+        return
+        
+    country_id = int(callback.data.split('_')[2])
+    session = get_session()
+    
+    try:
+        country = session.query(Country).filter_by(id=country_id).first()
+        if country:
+            # Проверяем, есть ли активные подписки для этой страны
+            active_subs = session.query(Subscription).filter(
+                Subscription.country_id == country_id,
+                Subscription.is_active == True,
+                Subscription.end_date >= datetime.now(UTC)
+            ).count()
+            
+            if active_subs > 0:
+                await callback.answer(
+                    f"Невозможно удалить страну {country.flag} {country.name}: "
+                    f"есть {active_subs} активных подписок",
+                    show_alert=True
+                )
+            else:
+                # Удаляем страну
+                session.delete(country)
+                session.commit()
+                await callback.answer(f"Страна {country.flag} {country.name} удалена")
+        else:
+            await callback.answer("Страна не найдена")
+        
+        # Обновляем список стран
+        await show_countries_management(callback, bot)
+    finally:
+        session.close()
+
+async def start_add_country(callback: types.CallbackQuery, bot: Bot, state: FSMContext, **kwargs):
+    """Начало процесса добавления страны"""
+    if not await is_admin(callback.from_user.id):
+        return
+        
+    await callback.message.edit_text(
+        "🌍 Добавление новой страны\n\n"
+        "Введите название страны (например: Россия):",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="countries_cancel")]
+        ])
+    )
+    await state.set_state(AdminStates.waiting_for_country_name)
+
+async def process_country_name(message: types.Message, bot: Bot, state: FSMContext, **kwargs):
+    """Обработка ввода названия страны"""
+    if not await is_admin(message.from_user.id):
+        return
+        
+    # Сохраняем название страны
+    await state.update_data(country_name=message.text)
+    
+    # Просим ввести эмодзи флага
+    await message.answer(
+        "Отправьте эмодзи флага страны (например: 🇷🇺):",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="countries_cancel")]
+        ])
+    )
+    await state.set_state(AdminStates.waiting_for_country_code)
+    
+    # Удаляем сообщение с названием страны
+    await message.delete()
+
+async def process_country_flag(message: types.Message, bot: Bot, state: FSMContext, **kwargs):
+    """Обработка ввода флага страны"""
+    if not await is_admin(message.from_user.id):
+        return
+        
+    # Проверяем, что отправлен эмодзи флага
+    if not message.text or len(message.text) > 4:
+        await message.answer(
+            "❌ Пожалуйста, отправьте только эмодзи флага страны.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="❌ Отмена", callback_data="countries_cancel")]
+            ])
+        )
+        return
+        
+    # Получаем сохраненное название страны
+    data = await state.get_data()
+    country_name = data.get('country_name')
+    
+    session = get_session()
+    try:
+        # Создаем новую страну
+        country = Country(
+            name=country_name,
+            flag=message.text,
+            is_active=True
+        )
+        session.add(country)
+        session.commit()
+        
+        # Очищаем состояние
+        await state.clear()
+        
+        # Отправляем сообщение об успехе
+        callback_message = await message.answer(
+            f"✅ Страна {country.flag} {country.name} успешно добавлена!"
+        )
+        
+        # Показываем обновленный список стран
+        callback = types.CallbackQuery(
+            id="0",
+            from_user=message.from_user,
+            chat_instance="0",
+            message=callback_message,
+            data="admin_countries"
+        )
+        await show_countries_management(callback, bot)
+        
+        # Удаляем сообщение с флагом
+        await message.delete()
+    finally:
+        session.close()
+
+async def cancel_country_add(callback: types.CallbackQuery, bot: Bot, state: FSMContext, **kwargs):
+    """Отмена добавления страны"""
+    await state.clear()
+    await show_countries_management(callback, bot)
+
+async def process_admin_servers(callback_query: types.CallbackQuery, bot: Bot, **kwargs):
+    """Обработчик кнопки управления серверами"""
+    if not await is_admin(callback_query.from_user.id):
+        await callback_query.answer("У вас нет доступа к этой функции.")
+        return
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Добавить сервер", callback_data="add_server")],
+        [InlineKeyboardButton(text="📋 Список серверов", callback_data="list_servers")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")]
+    ])
+    
+    await callback_query.message.edit_text(
+        "Управление VPN серверами\n\n"
+        "Выберите действие:",
+        reply_markup=keyboard
+    )
+
+async def process_add_server(callback_query: types.CallbackQuery, state: FSMContext, **kwargs):
+    """Обработчик кнопки добавления сервера"""
+    if not await is_admin(callback_query.from_user.id):
+        await callback_query.answer("У вас нет доступа к этой функции.")
+        return
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Отмена", callback_data="admin_servers")]
+    ])
+    
+    await callback_query.message.edit_text(
+        "Добавление нового VPN сервера\n\n"
+        "Введите название сервера:",
+        reply_markup=keyboard
+    )
+    await state.set_state(AdminStates.waiting_for_server_name)
+
+async def process_server_name(message: types.Message, state: FSMContext, **kwargs):
+    """Обработчик ввода названия сервера"""
+    await state.update_data(server_name=message.text)
+    
+    # Получаем список стран
+    session = get_session()
+    try:
+        countries = session.query(Country).filter_by(is_active=True).all()
+        if not countries:
+            await message.answer(
+                "❌ Нет доступных стран. Сначала добавьте хотя бы одну страну.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔙 Отмена", callback_data="admin_servers")]
+                ])
+            )
+            await state.clear()
+            return
+        
+        # Создаем клавиатуру с выбором страны
+        keyboard = []
+        for country in countries:
+            keyboard.append([
+                InlineKeyboardButton(
+                    text=f"{country.flag} {country.name}",
+                    callback_data=f"server_country_{country.id}"
+                )
+            ])
+        keyboard.append([InlineKeyboardButton(text="🔙 Отмена", callback_data="admin_servers")])
+        
+        await message.answer(
+            "Выберите страну для сервера:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+        )
+    finally:
+        session.close()
+    
+    # Удаляем сообщение с названием сервера
+    await message.delete()
+
+async def process_server_country(callback: types.CallbackQuery, state: FSMContext, bot: Bot, **kwargs):
+    """Обработка выбора страны для сервера"""
+    if not await is_admin(callback.from_user.id):
+        return
+        
+    country_id = int(callback.data.split('_')[1])
+    session = get_session()
+    
+    try:
+        # Получаем страну
+        country = session.query(Country).filter_by(id=country_id).first()
+        if not country:
+            await callback.answer("Страна не найдена")
+            return
+            
+        # Обновляем состояние
+        await state.update_data(country_id=country_id)
+        
+        # Запрашиваем хост сервера
+        await callback.message.edit_text(
+            f"Выбрана страна: {country.flag} {country.name}\n\n"
+            "Введите хост сервера (IP или домен):",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_server")
+            ]])
+        )
+        
+        # Устанавливаем состояние ожидания хоста
+        await state.set_state(AdminStates.waiting_for_server_host)
+    finally:
+        session.close()
+
+async def process_server_host(message: types.Message, state: FSMContext, **kwargs):
+    """Обработчик ввода хоста сервера"""
+    await state.update_data(server_host=message.text)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Отмена", callback_data="admin_servers")]
+    ])
+    
+    await message.answer(
+        "Введите порт сервера:",
+        reply_markup=keyboard
+    )
+    await state.set_state(AdminStates.waiting_for_server_port)
+
+async def process_server_port(message: types.Message, state: FSMContext, **kwargs):
+    """Обработчик ввода порта сервера"""
+    try:
+        port = int(message.text)
+        if not 1 <= port <= 65535:
+            raise ValueError
+    except ValueError:
+        await message.answer("Пожалуйста, введите корректный порт (1-65535):")
+        return
+    
+    # Создаем новый сервер
+    session = get_session()
+    try:
+        data = await state.get_data()
+        server = VPNServer(
+            name=data['server_name'],
+            host=data['server_host'],
+            port=port,
+            country_id=data['country_id'],
+            is_active=True
+        )
+        session.add(server)
+        session.commit()
+        
+        # Получаем страну для отображения в сообщении
+        country = session.query(Country).filter_by(id=data['country_id']).first()
+        
+        await message.answer(
+            f"✅ Сервер успешно добавлен!\n\n"
+            f"Название: {server.name}\n"
+            f"Страна: {country.flag} {country.name}\n"
+            f"Хост: {server.host}\n"
+            f"Порт: {server.port}"
+        )
+    except Exception as e:
+        logger.error(f"Ошибка при добавлении сервера: {e}")
+        await message.answer("❌ Произошла ошибка при добавлении сервера.")
+    finally:
+        session.close()
+    
+    await state.clear()
+    # Создаем callback_query для возврата в админ-панель
+    callback = types.CallbackQuery(
+        id="0",
+        from_user=message.from_user,
+        chat_instance="0",
+        message=message,
+        data="admin_back"
+    )
+    await admin_back(callback, bot)
+
+async def process_list_servers(callback_query: types.CallbackQuery, bot: Bot, **kwargs):
+    """Обработчик кнопки просмотра списка серверов"""
+    if not await is_admin(callback_query.from_user.id):
+        await callback_query.answer("У вас нет доступа к этой функции.")
+        return
+
+    session = get_session()
+    try:
+        servers = session.query(VPNServer).options(joinedload(VPNServer.country)).all()
+        
+        if not servers:
+            await callback_query.message.edit_text(
+                "Список серверов пуст.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_servers")]
+                ])
+            )
+            return
+        
+        text = "📋 Список VPN серверов:\n\n"
+        keyboard_buttons = []
+        
+        for server in servers:
+            status = "🟢" if server.is_active else "🔴"
+            text += f"{status} {server.name}\n"
+            text += f"🌍 Страна: {server.country.flag} {server.country.name}\n"
+            text += f"📍 Хост: {server.host}\n"
+            text += f"🔌 Порт: {server.port}\n"
+            text += f"👥 Подключений: {len(server.subscriptions)}\n\n"
+            
+            # Добавляем кнопки управления для каждого сервера
+            keyboard_buttons.append([
+                InlineKeyboardButton(
+                    text=f"{'🔴 Деактивировать' if server.is_active else '🟢 Активировать'} {server.name}",
+                    callback_data=f"server_toggle_{server.id}"
+                )
+            ])
+            if len(server.subscriptions) == 0:
+                keyboard_buttons.append([
+                    InlineKeyboardButton(
+                        text=f"❌ Удалить {server.name}",
+                        callback_data=f"server_delete_{server.id}"
+                    )
+                ])
+        
+        keyboard_buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_servers")])
+        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+        
+        await callback_query.message.edit_text(text, reply_markup=keyboard)
+    finally:
+        session.close()
+
+async def process_server_action(callback_query: types.CallbackQuery, bot: Bot, **kwargs):
+    """Обработчик действий с сервером"""
+    if not await is_admin(callback_query.from_user.id):
+        await callback_query.answer("У вас нет доступа к этой функции.")
+        return
+
+    action, server_id = callback_query.data.split("_")[1:]
+    server_id = int(server_id)
+    
+    session = get_session()
+    try:
+        server = session.query(VPNServer).filter_by(id=server_id).first()
+        if not server:
+            await callback_query.answer("Сервер не найден.")
+            return
+        
+        if action == "toggle":
+            server.is_active = not server.is_active
+            session.commit()
+            status = "активирован" if server.is_active else "деактивирован"
+            await callback_query.answer(f"Сервер {status}")
+        elif action == "delete":
+            if len(server.subscriptions) > 0:
+                await callback_query.answer("Нельзя удалить сервер с активными подписками.")
+                return
+            session.delete(server)
+            session.commit()
+            await callback_query.answer("Сервер удален")
+        
+        # Обновляем список серверов
+        await process_list_servers(callback_query, bot)
+    except Exception as e:
+        logger.error(f"Ошибка при обработке действия с сервером: {e}")
+        await callback_query.answer("Произошла ошибка")
+    finally:
+        session.close()
+
+def register_admin_handlers(dp, bot: Bot):
     """Регистрация обработчиков админ-панели"""
-    dp.callback_query.register(show_stats, lambda c: c.data == "admin_stats")
-    dp.callback_query.register(show_users, lambda c: c.data == "admin_users")
-    dp.callback_query.register(show_finance, lambda c: c.data == "admin_finance")
-    dp.callback_query.register(show_vpn_management, lambda c: c.data == "admin_vpn")
-    dp.callback_query.register(admin_back, lambda c: c.data == "admin_back")
-    dp.callback_query.register(manage_user_vpn, lambda c: c.data.startswith("manage_vpn_"))
-    dp.callback_query.register(toggle_user_vpn, lambda c: c.data.startswith("vpn_toggle_"))
-    dp.callback_query.register(modify_vpn_duration, lambda c: c.data.startswith("vpn_add_"))
+    # Создаем функцию-обертку для передачи bot в обработчики
+    def wrap_handler(handler):
+        async def wrapper(event, *args, **kwargs):
+            return await handler(event, *args, **kwargs)
+        return wrapper
+
+    # Регистрируем обработчики с оберткой
+    dp.callback_query.register(wrap_handler(show_stats), lambda c: c.data == "admin_stats")
+    dp.callback_query.register(wrap_handler(show_users), lambda c: c.data == "admin_users")
+    dp.callback_query.register(wrap_handler(show_finance), lambda c: c.data == "admin_finance")
+    dp.callback_query.register(wrap_handler(show_vpn_management), lambda c: c.data == "admin_vpn")
+    dp.callback_query.register(wrap_handler(admin_back), lambda c: c.data == "admin_back")
+    dp.callback_query.register(wrap_handler(manage_user_vpn), lambda c: c.data.startswith("manage_vpn_"))
+    dp.callback_query.register(wrap_handler(toggle_user_vpn), lambda c: c.data.startswith("vpn_toggle_"))
+    dp.callback_query.register(wrap_handler(modify_vpn_duration), lambda c: c.data.startswith("vpn_add_"))
     # Обработчики для списка пользователей
-    dp.callback_query.register(process_users_period, lambda c: c.data.startswith("users_period_"))
-    dp.callback_query.register(refresh_users_list, lambda c: c.data == "users_refresh")
-    dp.callback_query.register(show_users_search, lambda c: c.data == "users_search")
+    dp.callback_query.register(wrap_handler(process_users_period), lambda c: c.data.startswith("users_period_"))
+    dp.callback_query.register(wrap_handler(refresh_users_list), lambda c: c.data == "users_refresh")
+    dp.callback_query.register(wrap_handler(show_users_search), lambda c: c.data == "users_search")
     dp.message.register(process_user_search, AdminStates.waiting_for_user_id)
     # Обработчики для финансовой статистики
-    dp.callback_query.register(process_finance_period, lambda c: c.data.startswith("finance_period_"))
-    dp.callback_query.register(refresh_finance, lambda c: c.data == "finance_refresh") 
+    dp.callback_query.register(wrap_handler(process_finance_period), lambda c: c.data.startswith("finance_period_"))
+    dp.callback_query.register(wrap_handler(refresh_finance), lambda c: c.data == "finance_refresh")
+    # Обработчики для управления странами
+    dp.callback_query.register(wrap_handler(show_countries_management), lambda c: c.data == "admin_countries")
+    dp.callback_query.register(wrap_handler(toggle_country), lambda c: c.data.startswith("country_toggle_"))
+    dp.callback_query.register(wrap_handler(delete_country), lambda c: c.data.startswith("country_delete_"))
+    dp.callback_query.register(wrap_handler(start_add_country), lambda c: c.data == "country_add")
+    dp.callback_query.register(wrap_handler(cancel_country_add), lambda c: c.data == "countries_cancel")
+    dp.message.register(process_country_name, AdminStates.waiting_for_country_name)
+    dp.message.register(process_country_flag, AdminStates.waiting_for_country_code)
+    # Обработчики для управления серверами
+    dp.callback_query.register(wrap_handler(process_admin_servers), lambda c: c.data == "admin_servers")
+    dp.callback_query.register(wrap_handler(process_add_server), lambda c: c.data == "add_server")
+    dp.callback_query.register(wrap_handler(process_list_servers), lambda c: c.data == "list_servers")
+    dp.callback_query.register(wrap_handler(process_server_action), lambda c: c.data.startswith("server_"))
+    dp.callback_query.register(wrap_handler(process_server_country), lambda c: c.data.startswith("server_country_"))
+    dp.message.register(process_server_name, AdminStates.waiting_for_server_name)
+    dp.message.register(process_server_host, AdminStates.waiting_for_server_host)
+    dp.message.register(process_server_port, AdminStates.waiting_for_server_port) 
