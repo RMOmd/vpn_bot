@@ -52,10 +52,4 @@ V2RAY_SERVER_PORT = int(os.getenv('V2RAY_SERVER_PORT', '443'))
 SUPPORT_CHAT_URL = os.getenv('SUPPORT_CHAT_URL', 'https://t.me/your_support_chat')
 
 # Токен платежного провайдера для Telegram Payments
-PAYMENT_PROVIDER_TOKEN = os.getenv('PAYMENT_PROVIDER_TOKEN')
-
-# Настройки Robokassa
-ROBOKASSA_LOGIN = os.getenv('ROBOKASSA_LOGIN')
-ROBOKASSA_PASS1 = os.getenv('ROBOKASSA_PASS1')
-ROBOKASSA_PASS2 = os.getenv('ROBOKASSA_PASS2')
-ROBOKASSA_TEST_MODE = int(os.getenv('ROBOKASSA_TEST_MODE', '1'))  # 1 - тестовый режим, 0 - боевой 
+PAYMENT_PROVIDER_TOKEN = os.getenv('PAYMENT_PROVIDER_TOKEN') 

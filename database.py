@@ -56,14 +56,18 @@ class User(Base):
         """Проверить возможность использования пробного периода"""
         return not self.trial_used and not self.get_active_subscription()
     
-    def has_active_paid_subscription(self):
-        """Проверить наличие активной платной подписки"""
-        active_sub = self.get_active_subscription()
-        return active_sub and not active_sub.is_trial
-
-    def has_used_trial(self) -> bool:
-        """Проверяет, использовал ли пользователь пробный период"""
-        session = Session()
+    def has_used_trial(self, session=None) -> bool:
+        """Проверяет, использовал ли пользователь пробный период
+        
+        Args:
+            session: Существующая сессия SQLAlchemy (опционально)
+        """
+        if session is None:
+            session = Session()
+            should_close = True
+        else:
+            should_close = False
+            
         try:
             trial_sub = session.query(Subscription).filter(
                 Subscription.user_id == self.telegram_id,
@@ -71,7 +75,13 @@ class User(Base):
             ).first()
             return trial_sub is not None
         finally:
-            session.close()
+            if should_close:
+                session.close()
+
+    def has_active_paid_subscription(self):
+        """Проверить наличие активной платной подписки"""
+        active_sub = self.get_active_subscription()
+        return active_sub and not active_sub.is_trial
 
 class Subscription(Base):
     __tablename__ = 'subscriptions'
@@ -116,9 +126,19 @@ def init_db():
     session.commit()
     session.close()
 
-def get_or_create_user(telegram_user):
-    """Получить или создать пользователя"""
-    session = Session()
+def get_or_create_user(telegram_user, session=None):
+    """Получить или создать пользователя
+    
+    Args:
+        telegram_user: Объект пользователя Telegram
+        session: Существующая сессия SQLAlchemy (опционально)
+    """
+    if session is None:
+        session = Session()
+        should_close = True
+    else:
+        should_close = False
+        
     try:
         user = session.query(User).filter_by(telegram_id=telegram_user.id).first()
         if not user:
@@ -139,12 +159,32 @@ def get_or_create_user(telegram_user):
             session.commit()
         return user
     finally:
-        session.close()
+        if should_close:
+            session.close()
 
-def create_trial_subscription(user):
-    """Создать пробную подписку для пользователя"""
-    session = Session()
+def create_trial_subscription(user, session=None):
+    """Создать пробную подписку для пользователя
+    
+    Args:
+        user: Объект пользователя
+        session: Существующая сессия SQLAlchemy (опционально)
+    """
+    if session is None:
+        session = Session()
+        should_close = True
+    else:
+        should_close = False
+        
     try:
+        # Проверяем, не использовал ли пользователь уже пробный период
+        existing_trial = session.query(Subscription).filter(
+            Subscription.user_id == user.telegram_id,
+            Subscription.is_trial == True
+        ).first()
+        
+        if existing_trial:
+            return None
+            
         subscription = Subscription(
             user_id=user.telegram_id,
             start_date=datetime.now(UTC),
@@ -158,4 +198,5 @@ def create_trial_subscription(user):
         session.commit()
         return subscription
     finally:
-        session.close() 
+        if should_close:
+            session.close() 

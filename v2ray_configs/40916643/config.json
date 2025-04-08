@@ -1,0 +1,13 @@
+{
+  "v": "2",
+  "ps": "VPN Bot Client 40916643",
+  "add": "your.server.ip",
+  "port": 443,
+  "id": "e2fbdb6f-429e-4fae-80aa-aab91d5bc0ef",
+  "aid": 0,
+  "net": "ws",
+  "type": "none",
+  "host": "",
+  "path": "/v2ray",
+  "tls": ""
+}

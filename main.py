@@ -1,21 +1,17 @@
 import os
-import hashlib
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice
 from config import (
     BOT_TOKEN,
     ADMIN_IDS,
     SUBSCRIPTION_PRICES,
-    CRYPTO_PAY_TOKEN,
-    CRYPTO_PAY_TESTNET,
     SUPPORT_CHAT_URL
 )
 from database import init_db, get_or_create_user, create_trial_subscription, Session, User, Subscription
 from admin import register_admin_handlers
 from v2ray import V2RayManager
 from datetime import datetime, timedelta, UTC
-from crypto_pay import CryptoPay
 import logging
 
 # Настройка логирования
@@ -35,11 +31,6 @@ v2ray_manager = V2RayManager(
     server_port=int(os.getenv('V2RAY_SERVER_PORT', 443))
 )
 
-# Инициализация Crypto Pay
-print(f"CRYPTO_PAY_TOKEN: {CRYPTO_PAY_TOKEN}")  # Отладочный вывод
-print(f"CRYPTO_PAY_TESTNET: {CRYPTO_PAY_TESTNET}")  # Отладочный вывод
-crypto_pay = CryptoPay(CRYPTO_PAY_TOKEN, CRYPTO_PAY_TESTNET)
-
 def get_main_keyboard():
     """Создание основной клавиатуры"""
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -51,10 +42,10 @@ def get_main_keyboard():
 def get_subscription_keyboard():
     """Создание клавиатуры с подписками"""
     keyboard = []
-    for months, price in SUBSCRIPTION_PRICES.items():
+    for months, stars in SUBSCRIPTION_PRICES.items():
         keyboard.append([
             InlineKeyboardButton(
-                text=f"{months} месяц(ев) - {price} USDT",
+                text=f"{months} месяц(ев) - {stars} ⭐️",
                 callback_data=f"buy_{months}"
             )
         ])
@@ -64,53 +55,16 @@ def get_subscription_keyboard():
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     """Обработчик команды /start"""
-    # Проверяем, есть ли параметр в команде start
-    if len(message.text.split()) > 1:
-        start_param = message.text.split()[1]
-        if start_param.startswith("pay_"):
-            # Обрабатываем платеж
-            _, months, user_id = start_param.split("_")
-            months = int(months)
-            user_id = int(user_id)
-            
-            if message.from_user.id != user_id:
-                await message.answer("Этот платеж предназначен для другого пользователя.")
-                return
-                
-            # Создаем подписку
-            session = Session()
-            try:
-                user = session.query(User).filter_by(telegram_id=user_id).first()
-                if user:
-                    subscription = Subscription(
-                        user_id=user.telegram_id,
-                        start_date=datetime.now(UTC),
-                        end_date=datetime.now(UTC) + timedelta(days=30*months),
-                        price=SUBSCRIPTION_PRICES[months],
-                        is_active=True,
-                        payment_type="crypto"
-                    )
-                    session.add(subscription)
-                    session.commit()
-                    
-                    await message.answer(
-                        f"✅ Оплата успешно получена!\n\n"
-                        f"Ваша подписка активирована на {months} месяц(ев).\n"
-                        f"Срок действия: до {subscription.end_date.strftime('%d.%m.%Y')}"
-                    )
-                else:
-                    await message.answer("Ошибка: пользователь не найден")
-            finally:
-                session.close()
-            return
-    
-    # Обычный старт бота
-    user = get_or_create_user(message.from_user)
-    welcome_text = (
-        "👋 Добро пожаловать в VPN бот!\n\n"
-        "Выберите нужный пункт меню:"
-    )
-    await message.answer(welcome_text, reply_markup=get_main_keyboard())
+    session = Session()
+    try:
+        user = get_or_create_user(message.from_user, session)
+        welcome_text = (
+            "👋 Добро пожаловать в VPN бот!\n\n"
+            "Выберите нужный пункт меню:"
+        )
+        await message.answer(welcome_text, reply_markup=get_main_keyboard())
+    finally:
+        session.close()
 
 @dp.callback_query()
 async def process_callback(callback_query: types.CallbackQuery):
@@ -127,107 +81,132 @@ async def process_callback(callback_query: types.CallbackQuery):
         )
     elif callback_query.data.startswith("buy_"):
         months = int(callback_query.data.split("_")[1])
-        price = SUBSCRIPTION_PRICES[months]
+        stars = SUBSCRIPTION_PRICES[months]
         
-        # Получаем информацию о боте
-        bot_info = await bot.get_me()
+        # Создаем счет для оплаты звездами
+        prices = [LabeledPrice(label=f"VPN на {months} мес.", amount=stars)]
         
-        # Создаем счет в Crypto Pay
-        invoice = await crypto_pay.create_invoice(
-            amount=price,
-            description=f"VPN подписка на {months} месяц(ев)",
-            payload=f"vpn_sub_{months}_{callback_query.from_user.id}",
-            paid_btn_name="start",
-            paid_btn_url=f"https://t.me/{bot_info.username}?start=pay_{months}_{callback_query.from_user.id}"
+        await bot.send_invoice(
+            callback_query.from_user.id,
+            title=f"VPN подписка на {months} мес.",
+            description=f"Подписка на VPN сервис на {months} месяц(ев)",
+            payload=f"sub_{months}_{callback_query.from_user.id}",
+            provider_token="",  # Не нужен для звезд
+            currency="XTR",
+            prices=prices,
+            start_parameter=f"sub_{months}",
+            need_name=False,
+            need_phone_number=False,
+            need_email=False,
+            need_shipping_address=False,
+            is_flexible=False
         )
-        
-        if not invoice:
-            await callback_query.message.answer(
-                "Произошла ошибка при создании счета. Попробуйте позже."
-            )
-            return
-            
-        # Создаем клавиатуру с кнопкой оплаты
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text="💳 Оплатить",
-                url=invoice["bot_invoice_url"]
-            )],
-            [InlineKeyboardButton(
-                text="◀️ Назад",
-                callback_data="show_prices"
-            )]
-        ])
         
         await callback_query.message.edit_text(
             f"Счет на оплату создан!\n\n"
             f"Период: {months} месяц(ев)\n"
-            f"Сумма: {price} USDT\n\n"
-            f"Нажмите кнопку 'Оплатить' для перехода к оплате.\n"
-            f"После оплаты нажмите кнопку 'Start' в боте.",
-            reply_markup=keyboard
+            f"Стоимость: {stars} ⭐️\n\n"
+            f"Для оплаты нажмите кнопку выше.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="◀️ Назад", callback_data="show_prices")
+            ]])
         )
-    elif callback_query.data.startswith("check_payment_"):
-        invoice_id = int(callback_query.data.split("_")[2])
-        invoice = await crypto_pay.get_invoice(invoice_id)
-        
-        if not invoice:
-            await callback_query.message.answer(
-                "Произошла ошибка при проверке оплаты. Попробуйте позже."
-            )
-            return
+    elif callback_query.data == "get_trial":
+        session = Session()
+        try:
+            # Получаем пользователя в текущей сессии
+            user = session.query(User).filter_by(telegram_id=callback_query.from_user.id).first()
+            if not user:
+                # Если пользователя нет, создаем его
+                user = get_or_create_user(callback_query.from_user, session)
             
-        if invoice["status"] == "paid":
-            # Получаем информацию о подписке из payload
-            _, months, user_id = invoice["payload"].split("_")
-            months = int(months)
-            user_id = int(user_id)
-            
-            # Создаем подписку
-            session = Session()
-            try:
-                user = session.query(User).filter_by(telegram_id=user_id).first()
-                if user:
-                    subscription = Subscription(
-                        user_id=user.telegram_id,
-                        start_date=datetime.now(UTC),
-                        end_date=datetime.now(UTC) + timedelta(days=30*months),
-                        price=SUBSCRIPTION_PRICES[months],
-                        is_active=True,
-                        payment_type="crypto"
+            # Проверяем использование пробного периода
+            if user.has_used_trial(session):
+                await callback_query.message.answer(
+                    "Вы уже использовали пробный период. Выберите тариф для покупки подписки:",
+                    reply_markup=get_subscription_keyboard()
+                )
+            else:
+                subscription = create_trial_subscription(user, session)
+                if subscription:
+                    await callback_query.message.answer(
+                        "🎉 Поздравляем!\n\n"
+                        "Вам предоставлен бесплатный пробный период на 7 дней.\n"
+                        "Наслаждайтесь безопасным и быстрым VPN!"
                     )
-                    session.add(subscription)
-                    session.commit()
                     
-                    await callback_query.message.edit_text(
-                        f"✅ Оплата успешно получена!\n\n"
-                        f"Ваша подписка активирована на {months} месяц(ев).\n"
-                        f"Срок действия: до {subscription.end_date.strftime('%d.%m.%Y')}"
-                    )
+                    # Создаем и отправляем конфигурацию V2Ray
+                    success, client_uuid = await v2ray_manager.create_and_send_config(callback_query.from_user.id, bot)
+                    if not success:
+                        await callback_query.message.answer(
+                            "❌ Возникла ошибка при создании конфигурации.\n"
+                            "Пожалуйста, обратитесь в техподдержку."
+                        )
                 else:
                     await callback_query.message.answer(
-                        "Ошибка: пользователь не найден"
+                        "Вы уже использовали пробный период. Выберите тариф для покупки подписки:",
+                        reply_markup=get_subscription_keyboard()
                     )
-            finally:
-                session.close()
-        else:
-            await callback_query.message.answer(
-                "Оплата еще не получена. Попробуйте проверить позже."
+        finally:
+            session.close()
+
+@dp.pre_checkout_query()
+async def process_pre_checkout_query(pre_checkout_query: types.PreCheckoutQuery):
+    """Обработчик предварительной проверки платежа"""
+    await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
+
+@dp.message(F.successful_payment)
+async def process_successful_payment(message: types.Message):
+    """Обработчик успешного платежа"""
+    try:
+        # Получаем информацию о подписке из payload
+        _, months, user_id = message.successful_payment.invoice_payload.split("_")
+        months = int(months)
+        user_id = int(user_id)
+        
+        # Создаем подписку
+        session = Session()
+        try:
+            # Получаем пользователя в текущей сессии
+            user = session.query(User).filter_by(telegram_id=user_id).first()
+            if not user:
+                # Если пользователя нет, создаем его
+                user = get_or_create_user(message.from_user, session)
+                
+            subscription = Subscription(
+                user_id=user.telegram_id,
+                start_date=datetime.now(UTC),
+                end_date=datetime.now(UTC) + timedelta(days=30*months),
+                price=SUBSCRIPTION_PRICES[months],
+                is_active=True,
+                payment_type="stars"
             )
-    elif callback_query.data == "get_trial":
-        user = get_or_create_user(callback_query.from_user)
-        if user.has_used_trial():
-            await callback_query.message.answer(
-                "Вы уже использовали пробный период. Выберите тариф для покупки подписки:",
-                reply_markup=get_subscription_keyboard()
-            )
-        else:
-            create_trial_subscription(user)
-            await callback_query.message.answer(
-                "🎉 Поздравляем!\n\n"
-                "Вам предоставлен бесплатный пробный период на 7 дней.\n"
-                "Наслаждайтесь безопасным и быстрым VPN!"
-            )
+            session.add(subscription)
+            session.commit()
+            
+            # Создаем и отправляем конфигурацию V2Ray
+            success, client_uuid = await v2ray_manager.create_and_send_config(user_id, bot)
+            if success:
+                await message.answer(
+                    f"✅ Оплата успешно получена!\n\n"
+                    f"Ваша подписка активирована на {months} месяц(ев).\n"
+                    f"Срок действия: до {subscription.end_date.strftime('%d.%m.%Y')}\n\n"
+                    f"Конфигурация V2Ray отправлена отдельным сообщением."
+                )
+            else:
+                await message.answer(
+                    f"✅ Оплата успешно получена, но возникла ошибка при создании конфигурации.\n"
+                    f"Пожалуйста, обратитесь в техподдержку."
+                )
+        finally:
+            session.close()
+    except Exception as e:
+        logger.error(f"Ошибка при обработке платежа: {e}")
+        await message.answer(
+            "❌ Произошла ошибка при обработке платежа. "
+            "Пожалуйста, обратитесь в техподдержку.",
+            reply_markup=get_main_keyboard()
+        )
 
 async def main():
     # Инициализация базы данных
@@ -238,7 +217,6 @@ async def main():
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
         await bot.session.close()
-        await crypto_pay.close()
 
 if __name__ == "__main__":
     import asyncio
