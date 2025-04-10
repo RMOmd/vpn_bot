@@ -1,10 +1,10 @@
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey, Float
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey, Float, BigInteger
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.orm import sessionmaker, relationship, scoped_session, joinedload
 from datetime import datetime, timedelta, UTC
 import os
 from dotenv import load_dotenv
-from config import DEVELOPER_ID
+from config import DEVELOPER_ID, DATABASE_URL
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -13,8 +13,29 @@ Base = declarative_base()
 DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///vpn_bot.db')
 ADMIN_IDS = [int(id.strip()) for id in os.getenv('ADMIN_IDS', '').split(',') if id.strip()]
 
+# Создаем движок базы данных
 engine = create_engine(DATABASE_URL)
+
+# Создаем фабрику сессий
 Session = sessionmaker(bind=engine)
+
+def get_session():
+    """Создает новую сессию базы данных"""
+    return Session()
+
+class Country(Base):
+    """Модель страны"""
+    __tablename__ = 'countries'
+    
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    flag = Column(String, nullable=False)  # Эмодзи флага
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.now(UTC))
+    
+    # Связи
+    servers = relationship("VPNServer", back_populates="country")
+    subscriptions = relationship("Subscription", back_populates="country")
 
 class User(Base):
     __tablename__ = 'users'
@@ -23,19 +44,30 @@ class User(Base):
     username = Column(String)
     first_name = Column(String)
     last_name = Column(String)
+    created_at = Column(DateTime, default=datetime.now(UTC))
     is_active = Column(Boolean, default=False)
-    trial_used = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
-    subscriptions = relationship("Subscription", backref="user", lazy="dynamic")
+    device_id = Column(String, unique=True)  # Уникальный идентификатор устройства
+    client_app = Column(String)  # Информация о клиентском приложении
+    last_ip = Column(String)  # Последний известный IP-адрес
+    last_mac = Column(String)  # MAC-адрес устройства
+    last_seen = Column(DateTime)  # Время последней активности
+    subscriptions = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")
 
     def get_active_subscription(self):
         """Получить активную подписку пользователя"""
-        now = datetime.now(UTC)
-        return self.subscriptions.filter(
-            Subscription.is_active == True,
-            Subscription.start_date <= now,
-            Subscription.end_date >= now
-        ).first()
+        session = get_session()
+        try:
+            now = datetime.now(UTC)
+            return session.query(Subscription).options(
+                joinedload(Subscription.server)
+            ).filter(
+                Subscription.user_id == self.telegram_id,
+                Subscription.is_active == True,
+                Subscription.start_date <= now,
+                Subscription.end_date >= now
+            ).first()
+        finally:
+            session.close()
     
     def get_days_left(self):
         """Получить количество оставшихся дней подписки"""
@@ -56,106 +88,240 @@ class User(Base):
         """Проверить возможность использования пробного периода"""
         return not self.trial_used and not self.get_active_subscription()
     
+    def has_used_trial(self, session=None) -> bool:
+        """Проверяет, использовал ли пользователь пробный период
+        
+        Args:
+            session: Существующая сессия SQLAlchemy (опционально)
+        """
+        if session is None:
+            session = get_session()
+            should_close = True
+        else:
+            should_close = False
+            
+        try:
+            trial_sub = session.query(Subscription).filter(
+                Subscription.user_id == self.telegram_id,
+                Subscription.is_trial == True
+            ).first()
+            return trial_sub is not None
+        finally:
+            if should_close:
+                session.close()
+
     def has_active_paid_subscription(self):
         """Проверить наличие активной платной подписки"""
         active_sub = self.get_active_subscription()
         return active_sub and not active_sub.is_trial
 
+    def update_device_info(self, device_id: str, client_app: str, ip: str = None, mac: str = None):
+        """Обновляет информацию об устройстве пользователя"""
+        self.device_id = device_id
+        self.client_app = client_app
+        if ip:
+            self.last_ip = ip
+        if mac:
+            self.last_mac = mac
+        self.last_seen = datetime.now(UTC)
+
+    def get_device_info(self) -> dict:
+        """Возвращает информацию об устройстве пользователя"""
+        return {
+            'device_id': self.device_id,
+            'client_app': self.client_app,
+            'last_ip': self.last_ip,
+            'last_mac': self.last_mac,
+            'last_seen': self.last_seen
+        }
+
+    def is_device_authorized(self, device_id: str) -> bool:
+        """Проверяет, авторизовано ли устройство для пользователя"""
+        return self.device_id == device_id
+
 class Subscription(Base):
+    """Модель подписки"""
     __tablename__ = 'subscriptions'
     
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.telegram_id'))
-    start_date = Column(DateTime, default=lambda: datetime.now(UTC))
+    country_id = Column(Integer, ForeignKey('countries.id'))
+    server_id = Column(Integer, ForeignKey('vpn_servers.id'))
+    uuid = Column(String, unique=True)  # UUID для V2Ray
+    start_date = Column(DateTime, default=datetime.now(UTC))
     end_date = Column(DateTime)
-    price = Column(Float, default=0)
+    price = Column(Float)
     is_trial = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
-    payment_type = Column(String)  # trial, money, stars
-    stars_paid = Column(Integer, default=0)  # Количество потраченных звезд
+    payment_type = Column(String)  # stars, crypto, etc.
+    stars_paid = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.now(UTC))
+    
+    # Связи
+    user = relationship("User", back_populates="subscriptions")
+    country = relationship("Country", back_populates="subscriptions")
+    server = relationship("VPNServer", back_populates="subscriptions")
 
     def is_expired(self):
         """Проверить, истекла ли подписка"""
         return datetime.now(UTC) > self.end_date
 
+class VPNServer(Base):
+    """Модель VPN сервера"""
+    __tablename__ = 'vpn_servers'
+    
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    host = Column(String, nullable=False)
+    port = Column(Integer, nullable=False)
+    country_id = Column(Integer, ForeignKey('countries.id'), nullable=False)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.now(UTC))
+    
+    # Связи
+    subscriptions = relationship("Subscription", back_populates="server")
+    country = relationship("Country", back_populates="servers")
+
 def init_db():
     """Инициализация базы данных"""
+    # Создаем все таблицы
     Base.metadata.create_all(engine)
     
     # Создаем сессию
-    session = Session()
+    session = get_session()
     
-    # Добавляем администраторов
-    for admin_id in ADMIN_IDS:
-        existing_admin = session.query(User).filter_by(telegram_id=admin_id).first()
-        if not existing_admin:
-            admin = User(
-                telegram_id=admin_id,
-                is_active=True
+    try:
+        # Добавляем администраторов
+        for admin_id in ADMIN_IDS:
+            existing_admin = session.query(User).filter_by(telegram_id=admin_id).first()
+            if not existing_admin:
+                admin = User(
+                    telegram_id=admin_id,
+                    is_active=True
+                )
+                session.add(admin)
+            else:
+                # Обновляем статус существующего пользователя
+                existing_admin.is_active = True
+        
+        # Сохраняем изменения
+        session.commit()
+    finally:
+        session.close()
+
+def get_or_create_user(telegram_user, session=None):
+    """Получить или создать пользователя
+    
+    Args:
+        telegram_user: Объект пользователя Telegram
+        session: Существующая сессия SQLAlchemy (опционально)
+    """
+    if session is None:
+        session = get_session()
+        should_close = True
+    else:
+        should_close = False
+        
+    try:
+        user = session.query(User).filter_by(telegram_id=telegram_user.id).first()
+        if not user:
+            user = User(
+                telegram_id=telegram_user.id,
+                username=telegram_user.username,
+                first_name=telegram_user.first_name,
+                last_name=telegram_user.last_name,
+                created_at=datetime.now(UTC)
             )
-            session.add(admin)
+            session.add(user)
+            session.commit()
         else:
-            # Обновляем статус существующего пользователя
-            existing_admin.is_active = True
-    
-    # Сохраняем изменения
-    session.commit()
-    session.close()
+            # Обновляем данные существующего пользователя
+            user.username = telegram_user.username
+            user.first_name = telegram_user.first_name
+            user.last_name = telegram_user.last_name
+            session.commit()
+        return user
+    finally:
+        if should_close:
+            session.close()
 
-def get_or_create_user(telegram_id, username, first_name, last_name, fingerprint):
-    session = Session()
-    user = session.query(User).filter_by(telegram_id=telegram_id).first()
+def create_trial_subscription(user, session=None):
+    """Создать пробную подписку для пользователя
     
-    if not user:
-        user = User(
-            telegram_id=telegram_id,
-            username=username,
-            first_name=first_name,
-            last_name=last_name,
-            fingerprint=fingerprint
-        )
-        session.add(user)
-        session.commit()
-    
-    session.close()
-    return user
-
-def create_trial_subscription(user_id, telegram_id):
-    session = Session()
-    user = session.query(User).filter_by(id=user_id).first()
-    
-    # Специальная проверка для разработчика
-    if telegram_id == DEVELOPER_ID:
-        end_date = datetime.now(UTC) + timedelta(days=7)
+    Args:
+        user: Объект пользователя
+        session: Существующая сессия SQLAlchemy (опционально)
+    """
+    if session is None:
+        session = get_session()
+        should_close = True
+    else:
+        should_close = False
+        
+    try:
+        # Проверяем, не использовал ли пользователь уже пробный период
+        existing_trial = session.query(Subscription).filter(
+            Subscription.user_id == user.telegram_id,
+            Subscription.is_trial == True
+        ).first()
+        
+        if existing_trial:
+            return None
+            
         subscription = Subscription(
-            user_id=user.id,
-            end_date=end_date,
-            subscription_type='trial',
+            user_id=user.telegram_id,
+            start_date=datetime.now(UTC),
+            end_date=datetime.now(UTC) + timedelta(days=7),
             price=0,
-            payment_method='trial'
+            is_trial=True,
+            is_active=True,
+            payment_type="trial"
         )
         session.add(subscription)
         session.commit()
-        session.close()
-        return True
+        return subscription
+    finally:
+        if should_close:
+            session.close()
+
+def delete_user(telegram_id: int, session=None):
+    """Удалить пользователя и все его подписки
     
-    if user and not user.trial_used:
-        end_date = datetime.now(UTC) + timedelta(days=7)
-        user.trial_used = True
-        user.trial_end_date = end_date
-        
-        subscription = Subscription(
-            user_id=user.id,
-            end_date=end_date,
-            subscription_type='trial',
-            price=0,
-            payment_method='trial'
-        )
-        
-        session.add(subscription)
-        session.commit()
-        session.close()
-        return True
+    Args:
+        telegram_id: Telegram ID пользователя
+        session: Существующая сессия SQLAlchemy (опционально)
     
-    session.close()
-    return False 
+    Returns:
+        bool: True если пользователь был удален, False если пользователь не найден
+    """
+    if session is None:
+        session = get_session()
+        should_close = True
+    else:
+        should_close = False
+        
+    try:
+        user = session.query(User).filter_by(telegram_id=telegram_id).first()
+        if user:
+            # Удаляем все подписки пользователя
+            session.query(Subscription).filter_by(user_id=telegram_id).delete()
+            # Удаляем самого пользователя
+            session.delete(user)
+            session.commit()
+            return True
+        return False
+    finally:
+        if should_close:
+            session.close()
+
+def get_active_subscription(user_id: int, session) -> Subscription:
+    """Получение активной подписки пользователя"""
+    return session.query(Subscription).filter_by(
+        user_id=user_id,
+        is_active=True
+    ).first()
+
+def deactivate_subscription(subscription: Subscription, session):
+    """Деактивация подписки"""
+    subscription.is_active = False
+    session.commit() 

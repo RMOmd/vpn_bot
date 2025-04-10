@@ -1,28 +1,14 @@
-from database import Base, engine, Session, User, Subscription
-from config import ADMIN_IDS
+from database import Base, engine
+from add_initial_countries import add_initial_countries
 
 def init_database():
-    # Удаляем все таблицы
-    Base.metadata.drop_all(engine)
-    
-    # Создаем таблицы заново
+    # Создаем все таблицы
     Base.metadata.create_all(engine)
+    print("✅ Таблицы созданы")
     
-    # Создаем сессию
-    session = Session()
-    
-    # Добавляем администраторов
-    for admin_id in ADMIN_IDS:
-        admin = User(
-            telegram_id=admin_id,
-            is_active=True
-        )
-        session.add(admin)
-    
-    # Сохраняем изменения
-    session.commit()
-    session.close()
+    # Добавляем начальные данные
+    add_initial_countries()
+    print("✅ Начальные данные добавлены")
 
-if __name__ == '__main__':
-    init_database()
-    print("База данных успешно инициализирована!") 
+if __name__ == "__main__":
+    init_database() 
